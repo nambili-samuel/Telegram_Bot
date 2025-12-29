@@ -826,13 +826,13 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
         
         response = """🇳🇦 *Hi! I'm Eva Geises*
 
-I'm an AI assistant designed for group conversations about Namibia.
+I'm Eva Geises, an AI assistant designed for conversations about Namibia.
 
-*Current Features:*
-• Database-powered knowledge base
-• Full-text search capabilities
-• User activity tracking
-• Interactive menu system
+*You can ask me about:*
+• Namibia's culture
+• People and socioeconomy
+• Tourism and wildlife
+• Namibian history
 
 *To use me:*
 1. Add me to your Telegram group
