@@ -1,12 +1,13 @@
 import os
 import sqlite3
+import re
 from contextlib import contextmanager
 
 class KnowledgeBase:
     def __init__(self):
         self.db_path = os.getenv('DATABASE_PATH', 'bot_data.db')
         self.init_knowledge_base()
-        self.seed_initial_data()
+        self.seed_namibia_data()
     
     @contextmanager
     def get_connection(self):
@@ -30,6 +31,7 @@ class KnowledgeBase:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS knowledge (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,
                     topic TEXT NOT NULL,
                     content TEXT NOT NULL,
                     keywords TEXT,
@@ -41,90 +43,91 @@ class KnowledgeBase:
             # Create full-text search virtual table
             cursor.execute('''
                 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts 
-                USING fts5(topic, content, keywords)
+                USING fts5(category, topic, content, keywords)
             ''')
             
-            # Create index for better search performance
+            # Create index
             cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_knowledge_topic 
-                ON knowledge(topic)
+                CREATE INDEX IF NOT EXISTS idx_knowledge_category 
+                ON knowledge(category)
             ''')
     
-    def seed_initial_data(self):
-        """Seed the knowledge base with initial data"""
+    def seed_namibia_data(self):
+        """Seed Namibia knowledge base"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Check if data already exists
+            # Check if data exists
             cursor.execute('SELECT COUNT(*) as count FROM knowledge')
             if cursor.fetchone()['count'] > 0:
                 return
             
-            # Initial knowledge entries
-            initial_data = [
-                ('Python Programming', 
-                 'Python is a high-level, interpreted programming language known for its simplicity and readability. It supports multiple programming paradigms including procedural, object-oriented, and functional programming.',
-                 'programming, code, development, syntax'),
+            # Namibia knowledge data
+            namibia_data = [
+                # Geography
+                ('Geography', 'Where is Namibia', 'Namibia is in southwestern Africa, bordered by Angola, Zambia, Botswana, South Africa, and the Atlantic Ocean.', 'location, africa, southern africa, borders'),
+                ('Geography', 'Capital of Namibia', 'The capital of Namibia is Windhoek, located in the central highlands.', 'windhoek, capital, city'),
+                ('Geography', 'Size of Namibia', 'Namibia covers about 825,615 square kilometers, making it the 34th largest country.', 'size, area, square kilometers'),
                 
-                ('Machine Learning',
-                 'Machine Learning is a subset of artificial intelligence that enables systems to learn and improve from experience without being explicitly programmed. It uses statistical techniques to give computers the ability to learn from data.',
-                 'AI, artificial intelligence, data science, algorithms'),
+                # Tourism
+                ('Tourism', 'Best time to visit Namibia', 'The best time is May to October (dry season) for wildlife viewing and comfortable temperatures.', 'visit, travel, season, weather'),
+                ('Tourism', 'Etosha National Park', 'Etosha is Namibia\'s premier wildlife destination with lions, elephants, rhinos, and over 100 mammal species.', 'etosha, safari, wildlife, park'),
+                ('Tourism', 'Sossusvlei', 'Sossusvlei features the world\'s highest sand dunes (up to 380m) in the Namib Desert.', 'sossusvlei, dunes, desert, sand'),
+                ('Tourism', 'Swakopmund', 'Swakopmund is a coastal town with German colonial architecture and adventure activities.', 'swakopmund, coast, beach, german'),
+                ('Tourism', 'Fish River Canyon', 'Fish River Canyon is the second largest canyon in the world, perfect for hiking adventures.', 'canyon, hiking, fish river'),
+                ('Tourism', 'Namib Desert', 'The Namib Desert is the world\'s oldest desert with stunning landscapes and unique wildlife.', 'desert, namib, oldest'),
                 
-                ('Web Development',
-                 'Web development involves creating websites and web applications. It includes front-end development (user interface), back-end development (server-side logic), and database management.',
-                 'HTML, CSS, JavaScript, websites, frontend, backend'),
+                # Culture
+                ('Culture', 'Himba People', 'The Himba are semi-nomadic pastoralists known for their red ochre body paint and traditional lifestyle.', 'himba, tribe, people, culture'),
+                ('Culture', 'Herero People', 'The Herero are known for their Victorian-style dresses and cattle-herding traditions.', 'herero, tribe, people, culture'),
+                ('Culture', 'Languages in Namibia', 'English is official, but Afrikaans, German, Oshiwambo, and other indigenous languages are spoken.', 'language, english, afrikaans, oshiwambo'),
                 
-                ('Database Systems',
-                 'Database systems are organized collections of data that can be easily accessed, managed, and updated. Common types include relational databases (SQL) and NoSQL databases.',
-                 'SQL, data storage, queries, tables'),
+                # Practical
+                ('Practical', 'Visa Requirements', 'Most tourists get 90-day visa on arrival. Check with Namibian embassy for specific requirements.', 'visa, entry, requirements, travel'),
+                ('Practical', 'Currency', 'Namibia uses the Namibian Dollar (NAD), which is pegged to the South African Rand.', 'money, currency, dollar, nad'),
+                ('Practical', 'Weather', 'Namibia has a dry climate with 300+ sunny days per year. Days are warm, nights can be cool.', 'weather, climate, temperature'),
                 
-                ('API Development',
-                 'APIs (Application Programming Interfaces) allow different software applications to communicate with each other. REST and GraphQL are popular API architectures.',
-                 'REST, GraphQL, endpoints, integration'),
+                # Wildlife
+                ('Wildlife', 'Desert Adapted Elephants', 'These elephants have longer legs and larger feet to walk on sand, and can survive without water for days.', 'elephant, desert, adapted, wildlife'),
+                ('Wildlife', 'Namib Desert Lions', 'Desert-adapted lions survive in harsh conditions and are larger than their savanna counterparts.', 'lion, desert, predator, wildlife'),
+                ('Wildlife', 'Cheetahs', 'Namibia has the largest population of cheetahs in the world, with excellent conservation programs.', 'cheetah, wildlife, conservation'),
                 
-                ('Cloud Computing',
-                 'Cloud computing delivers computing services over the internet, including servers, storage, databases, networking, and software. Major providers include AWS, Google Cloud, and Azure.',
-                 'AWS, Azure, GCP, infrastructure, hosting'),
+                # History
+                ('History', 'Independence Day', 'Namibia gained independence from South Africa on March 21, 1990.', 'independence, history, 1990'),
+                ('History', 'German Colonization', 'Namibia was German South-West Africa from 1884-1915, leaving architectural influences.', 'german, colonial, history'),
                 
-                ('Version Control',
-                 'Version control systems track changes to code over time. Git is the most popular version control system, often used with platforms like GitHub, GitLab, or Bitbucket.',
-                 'git, github, commits, branches, repository'),
-                
-                ('Cybersecurity',
-                 'Cybersecurity protects systems, networks, and data from digital attacks. It includes practices like encryption, authentication, firewall configuration, and security auditing.',
-                 'security, encryption, authentication, protection'),
-                
-                ('Mobile Development',
-                 'Mobile development creates applications for mobile devices. Native development uses platform-specific languages (Swift for iOS, Kotlin for Android), while cross-platform frameworks like React Native enable code sharing.',
-                 'iOS, Android, apps, React Native, Flutter'),
-                
-                ('DevOps',
-                 'DevOps combines software development and IT operations to shorten development cycles and provide continuous delivery. It emphasizes automation, monitoring, and collaboration.',
-                 'CI/CD, automation, deployment, Docker, Kubernetes')
+                # Facts
+                ('Facts', 'Oldest Desert', 'The Namib Desert is 55-80 million years old, making it the world\'s oldest desert.', 'desert, oldest, namib, record'),
+                ('Facts', 'Population Density', 'Namibia has about 3 people per square kilometer, making it one of the least densely populated countries.', 'population, density, people'),
+                ('Facts', 'Dark Sky Reserve', 'Namibia has International Dark Sky Reserves, perfect for stargazing.', 'stars, stargazing, dark sky, astronomy'),
+                ('Facts', 'Conservation', 'Namibia is a world leader in conservation with 42% of its land under protection.', 'conservation, environment, protected'),
             ]
             
-            for topic, content, keywords in initial_data:
+            for category, topic, content, keywords in namibia_data:
                 cursor.execute('''
-                    INSERT INTO knowledge (topic, content, keywords)
-                    VALUES (?, ?, ?)
-                ''', (topic, content, keywords))
+                    INSERT INTO knowledge (category, topic, content, keywords)
+                    VALUES (?, ?, ?, ?)
+                ''', (category, topic, content, keywords))
                 
-                # Add to FTS table
+                knowledge_id = cursor.lastrowid
+                
                 cursor.execute('''
-                    INSERT INTO knowledge_fts (rowid, topic, content, keywords)
-                    VALUES (last_insert_rowid(), ?, ?, ?)
-                ''', (topic, content, keywords))
+                    INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (knowledge_id, category, topic, content, keywords))
     
     def search(self, query, limit=5):
         """Search the knowledge base"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Use FTS for better search results
-            search_query = ' OR '.join(query.split())
+            # Clean and prepare search query
+            search_terms = query.lower().strip().split()
+            search_query = ' OR '.join(search_terms)
             
+            # Try FTS search first
             cursor.execute('''
-                SELECT k.topic, k.content, k.keywords
+                SELECT k.category, k.topic, k.content, k.keywords
                 FROM knowledge_fts f
                 JOIN knowledge k ON k.id = f.rowid
                 WHERE knowledge_fts MATCH ?
@@ -134,79 +137,42 @@ class KnowledgeBase:
             
             results = cursor.fetchall()
             
-            # If no FTS results, fall back to LIKE search
+            # Fallback to LIKE search
             if not results:
                 search_pattern = f'%{query}%'
                 cursor.execute('''
-                    SELECT topic, content, keywords
+                    SELECT category, topic, content, keywords
                     FROM knowledge
                     WHERE topic LIKE ? OR content LIKE ? OR keywords LIKE ?
+                    ORDER BY 
+                        CASE 
+                            WHEN topic LIKE ? THEN 1
+                            WHEN content LIKE ? THEN 2
+                            ELSE 3
+                        END
                     LIMIT ?
-                ''', (search_pattern, search_pattern, search_pattern, limit))
+                ''', (search_pattern, search_pattern, search_pattern, 
+                      search_pattern, search_pattern, limit))
                 results = cursor.fetchall()
             
             return [dict(row) for row in results]
     
-    def add_knowledge(self, topic, content, keywords=''):
+    def add_knowledge(self, topic, content, category='General', keywords=''):
         """Add new knowledge entry"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT INTO knowledge (topic, content, keywords)
-                VALUES (?, ?, ?)
-            ''', (topic, content, keywords))
+                INSERT INTO knowledge (category, topic, content, keywords)
+                VALUES (?, ?, ?, ?)
+            ''', (category, topic, content, keywords))
             
             knowledge_id = cursor.lastrowid
             
             cursor.execute('''
-                INSERT INTO knowledge_fts (rowid, topic, content, keywords)
-                VALUES (?, ?, ?, ?)
-            ''', (knowledge_id, topic, content, keywords))
-    
-    def update_knowledge(self, knowledge_id, topic=None, content=None, keywords=None):
-        """Update existing knowledge entry"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            updates = []
-            params = []
-            
-            if topic:
-                updates.append('topic = ?')
-                params.append(topic)
-            if content:
-                updates.append('content = ?')
-                params.append(content)
-            if keywords:
-                updates.append('keywords = ?')
-                params.append(keywords)
-            
-            if updates:
-                updates.append('updated_at = CURRENT_TIMESTAMP')
-                params.append(knowledge_id)
-                
-                query = f"UPDATE knowledge SET {', '.join(updates)} WHERE id = ?"
-                cursor.execute(query, params)
-                
-                # Update FTS table
-                cursor.execute('''
-                    DELETE FROM knowledge_fts WHERE rowid = ?
-                ''', (knowledge_id,))
-                
-                cursor.execute('''
-                    INSERT INTO knowledge_fts (rowid, topic, content, keywords)
-                    SELECT id, topic, content, keywords
-                    FROM knowledge WHERE id = ?
-                ''', (knowledge_id,))
-    
-    def delete_knowledge(self, knowledge_id):
-        """Delete knowledge entry"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('DELETE FROM knowledge WHERE id = ?', (knowledge_id,))
-            cursor.execute('DELETE FROM knowledge_fts WHERE rowid = ?', (knowledge_id,))
+                INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (knowledge_id, category, topic, content, keywords))
     
     def get_all_topics(self):
         """Get all available topics"""
@@ -215,14 +181,21 @@ class KnowledgeBase:
             cursor.execute('SELECT DISTINCT topic FROM knowledge ORDER BY topic')
             return [row['topic'] for row in cursor.fetchall()]
     
-    def get_by_topic(self, topic):
-        """Get knowledge by exact topic match"""
+    def get_by_category(self, category):
+        """Get all topics in a category"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT topic, content, keywords
+                SELECT topic, content
                 FROM knowledge
-                WHERE topic = ?
-            ''', (topic,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+                WHERE category = ?
+                ORDER BY topic
+            ''', (category,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_categories(self):
+        """Get all categories"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT DISTINCT category FROM knowledge ORDER BY category')
+            return [row['category'] for row in cursor.fetchall()]
