@@ -589,11 +589,11 @@ Hello everyone! I'm your AI-powered Namibia assistant with database integration!
 
 I'm designed for group conversations about Namibia.
 
-*Database Features:*
-• Persistent storage with SQLite
-• Knowledge base with full-text search
-• User activity tracking
-• Query logging
+*My Roles:*
+• Help you learning about Namibia
+• Act as Tour Guide
+• Handling normal FAQs
+• Discovery Opportunities in Namibia
 
 *To use me:*
 1. Add me to a Telegram group
@@ -601,9 +601,9 @@ I'm designed for group conversations about Namibia.
 3. Start asking questions!
 
 *Group Features:*
-• Intelligent responses to questions
-• Interactive menus (/menu)
-• Welcome new members
+• I can respond to any question
+• Check my interactive menus here (/menu)
+• I can welcome new members
 • Conversation engagement
 
 Add me to your group now!"""
