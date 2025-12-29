@@ -554,7 +554,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type in ['group', 'supergroup']:
         welcome = f"""🇳🇦 *Intelligent NamibiaBot v2.0*
 
-Hello everyone! I'm your AI-powered Namibia assistant with database integration! 🧠
+Hello everyone! I'm Eva Geises your AI assistant with developed by ScienceTechniz! 🧠
 
 *Database Features:*
 • 📊 User tracking with SQLite
@@ -569,18 +569,18 @@ Hello everyone! I'm your AI-powered Namibia assistant with database integration!
 4. I'll welcome new members automatically
 
 *Try asking:*
-• "Best time to visit Namibia?"
+• "What is the best time to visit Namibia?"
 • "Tell me about Etosha National Park"
 • "What's unique about Himba culture?"
 • "Namibia travel tips"
 
 *Commands:*
-/menu - Interactive knowledge system
+/menu - Interactive system
 /stats - View statistics
 /help - Help information
-/start - Restart bot
+/start - Restart me
 
-🇳🇦 Let's explore Namibia together! 🦁"""
+🇳🇦 Let's explore Namibia together!"""
         
         await update.message.reply_text(welcome, parse_mode="Markdown")
     else:
@@ -664,7 +664,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Topics: {len(kb_db.get_all_topics())}
 • Categories: {len(kb_db.get_categories())}
 
-Keep exploring Namibia! Ask me anything about our beautiful country. 🦁"""
+Keep exploring Namibia! Ask me anything about our beautiful country, in Africa."""
     
     await update.message.reply_text(stats, parse_mode="Markdown")
 
