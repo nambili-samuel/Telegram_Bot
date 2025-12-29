@@ -23,24 +23,30 @@ class TelegramBot:
     
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
-        user = update.effective_user
-        self.db.add_user(user.id, user.username or "Unknown")
-        
-        keyboard = [
-            [InlineKeyboardButton("📚 Browse Topics", callback_data='browse_topics')],
-            [InlineKeyboardButton("🔍 Search Knowledge", callback_data='search_knowledge')],
-            [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        welcome_msg = (
-            f"👋 Welcome {user.first_name}!\n\n"
-            "I'm an intelligent bot with a knowledge database. "
-            "I can help you find information, answer questions, and more.\n\n"
-            "What would you like to do?"
-        )
-        
-        await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
+        try:
+            logger.info(f"Received /start from user {update.effective_user.id}")
+            user = update.effective_user
+            self.db.add_user(user.id, user.username or "Unknown")
+            
+            keyboard = [
+                [InlineKeyboardButton("📚 Browse Topics", callback_data='browse_topics')],
+                [InlineKeyboardButton("🔍 Search Knowledge", callback_data='search_knowledge')],
+                [InlineKeyboardButton("ℹ️ Help", callback_data='help')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            welcome_msg = (
+                f"👋 Welcome {user.first_name}!\n\n"
+                "I'm an intelligent bot with a knowledge database. "
+                "I can help you find information, answer questions, and more.\n\n"
+                "What would you like to do?"
+            )
+            
+            await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
+            logger.info(f"Sent welcome message to user {update.effective_user.id}")
+        except Exception as e:
+            logger.error(f"Error in start command: {e}", exc_info=True)
+            await update.message.reply_text("Sorry, something went wrong. Please try again.")
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
@@ -62,31 +68,37 @@ class TelegramBot:
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle text messages"""
-        user_id = update.effective_user.id
-        query = update.message.text
-        
-        # Log the query
-        self.db.log_query(user_id, query)
-        
-        # Search knowledge base
-        results = self.kb.search(query)
-        
-        if results:
-            response = "🔍 *Found relevant information:*\n\n"
-            for i, result in enumerate(results[:3], 1):
-                response += f"*{i}. {result['topic']}*\n{result['content']}\n\n"
+        try:
+            logger.info(f"Received message from user {update.effective_user.id}: {update.message.text}")
+            user_id = update.effective_user.id
+            query = update.message.text
             
-            response += f"_Found {len(results)} result(s)_"
-        else:
-            response = (
-                "😕 I couldn't find anything matching your query.\n\n"
-                "Try:\n"
-                "• Using different keywords\n"
-                "• Browsing available topics with /topics\n"
-                "• Asking in a different way"
-            )
-        
-        await update.message.reply_text(response, parse_mode='Markdown')
+            # Log the query
+            self.db.log_query(user_id, query)
+            
+            # Search knowledge base
+            results = self.kb.search(query)
+            
+            if results:
+                response = "🔍 *Found relevant information:*\n\n"
+                for i, result in enumerate(results[:3], 1):
+                    response += f"*{i}. {result['topic']}*\n{result['content']}\n\n"
+                
+                response += f"_Found {len(results)} result(s)_"
+            else:
+                response = (
+                    "😕 I couldn't find anything matching your query.\n\n"
+                    "Try:\n"
+                    "• Using different keywords\n"
+                    "• Browsing available topics with /topics\n"
+                    "• Asking in a different way"
+                )
+            
+            await update.message.reply_text(response, parse_mode='Markdown')
+            logger.info(f"Sent response to user {update.effective_user.id}")
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+            await update.message.reply_text("Sorry, I encountered an error processing your message.")
     
     async def search_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /search command"""
@@ -194,25 +206,48 @@ class TelegramBot:
     
     def run(self):
         """Start the bot"""
-        app = Application.builder().token(self.token).build()
-        
-        # Command handlers
-        app.add_handler(CommandHandler("start", self.start))
-        app.add_handler(CommandHandler("help", self.help_command))
-        app.add_handler(CommandHandler("search", self.search_command))
-        app.add_handler(CommandHandler("topics", self.topics_command))
-        app.add_handler(CommandHandler("stats", self.stats_command))
-        app.add_handler(CommandHandler("add", self.add_command))
-        
-        # Message handler
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
-        
-        # Button callback handler
-        app.add_handler(CallbackQueryHandler(self.button_callback))
-        
-        logger.info("Bot started successfully!")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        try:
+            logger.info(f"Initializing bot with token: {self.token[:10]}...")
+            app = Application.builder().token(self.token).build()
+            
+            # Command handlers
+            app.add_handler(CommandHandler("start", self.start))
+            app.add_handler(CommandHandler("help", self.help_command))
+            app.add_handler(CommandHandler("search", self.search_command))
+            app.add_handler(CommandHandler("topics", self.topics_command))
+            app.add_handler(CommandHandler("stats", self.stats_command))
+            app.add_handler(CommandHandler("add", self.add_command))
+            
+            # Message handler
+            app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+            
+            # Button callback handler
+            app.add_handler(CallbackQueryHandler(self.button_callback))
+            
+            logger.info("Bot started successfully! Waiting for messages...")
+            logger.info("Bot handlers registered. Starting polling...")
+            
+            # Run with proper error handling
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                poll_interval=1.0,
+                timeout=10
+            )
+        except Exception as e:
+            logger.error(f"Failed to start bot: {e}", exc_info=True)
+            raise
 
 if __name__ == '__main__':
-    bot = TelegramBot()
-    bot.run()
+    try:
+        logger.info("Starting Telegram Bot...")
+        logger.info(f"Python version: {__import__('sys').version}")
+        
+        bot = TelegramBot()
+        logger.info("Bot instance created successfully")
+        
+        bot.run()
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        import sys
+        sys.exit(1)
