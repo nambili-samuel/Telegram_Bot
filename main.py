@@ -171,15 +171,15 @@ class InteractiveMenu:
     def main_menu(self):
         """Create main menu with categories"""
         keyboard = [
-            [InlineKeyboardButton("💻 Programming", callback_data="cat_programming"),
-             InlineKeyboardButton("🤖 AI & ML", callback_data="cat_ai")],
-            [InlineKeyboardButton("🌐 Web Dev", callback_data="cat_web"),
-             InlineKeyboardButton("💾 Databases", callback_data="cat_database")],
-            [InlineKeyboardButton("☁️ Cloud", callback_data="cat_cloud"),
-             InlineKeyboardButton("🔐 Security", callback_data="cat_security")],
-            [InlineKeyboardButton("📱 Mobile", callback_data="cat_mobile"),
-             InlineKeyboardButton("🚀 DevOps", callback_data="cat_devops")],
-            [InlineKeyboardButton("📋 All Topics", callback_data="show_all_topics")]
+    [InlineKeyboardButton("🌍 Tourism", callback_data="cat_tourism"),
+     InlineKeyboardButton("👥 People", callback_data="cat_people")],
+    [InlineKeyboardButton("📜 History", callback_data="cat_history"),
+     InlineKeyboardButton("🗺️ Geography", callback_data="cat_geography")],
+    [InlineKeyboardButton("🦓 Wildlife", callback_data="cat_wildlife"),
+     InlineKeyboardButton("ℹ️ Practical Questions", callback_data="cat_practical")],
+    [InlineKeyboardButton("📱 Country Code", callback_data="cat_countrycode"),
+     InlineKeyboardButton("🚀 DevOps", callback_data="cat_devops")],
+    [InlineKeyboardButton("📋 All Topics", callback_data="show_all_topics")]
         ]
         return InlineKeyboardMarkup(keyboard)
     
