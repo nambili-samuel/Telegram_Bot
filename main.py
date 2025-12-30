@@ -1007,11 +1007,11 @@ def main():
     # Increased just enough to prevent timeout, but not too much
     app = ApplicationBuilder() \
         .token(TELEGRAM_BOT_TOKEN) \
-        .connect_timeout(15) \      # Reduced from 30 to 15 seconds
-        .read_timeout(10) \         # Reduced from 30 to 10 seconds
-        .write_timeout(10) \        # Reduced from 30 to 10 seconds
-        .pool_timeout(10) \         # Reduced from 30 to 10 seconds
-        .get_updates_read_timeout(15) \  # Reduced from 30 to 15 seconds
+        .connect_timeout(15) \
+        .read_timeout(10) \
+        .write_timeout(10) \
+        .pool_timeout(10) \
+        .get_updates_read_timeout(15) \
         .build()
     
     # Add command handlers (highest priority)
