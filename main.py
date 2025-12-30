@@ -824,7 +824,7 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     if update.message.chat.type == 'private':
         user = update.effective_user
         
-        response = """🇳🇦 *Hi! I'm Eva Geises*
+        response = """🇳🇦 *Hi, welcome to Namibia! *
 
 I'm Eva Geises, an AI assistant designed for conversations about Namibia.
 
