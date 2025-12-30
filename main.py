@@ -8,9 +8,11 @@ import os
 import random
 import re
 import asyncio
+import time
 from datetime import datetime, timedelta
 from rapidfuzz import fuzz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -554,7 +556,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.chat.type in ['group', 'supergroup']:
         welcome = f"""🇳🇦 *Intelligent NamibiaBot v2.0*
 
-Hello everyone! I'm Eva Geises your AI assistant with developed by ScienceTechniz! 🧠
+Hello everyone! I'm your AI-powered Namibia assistant with database integration! 🧠
 
 *Database Features:*
 • 📊 User tracking with SQLite
@@ -569,18 +571,18 @@ Hello everyone! I'm Eva Geises your AI assistant with developed by ScienceTechni
 4. I'll welcome new members automatically
 
 *Try asking:*
-• "What is the best time to visit Namibia?"
+• "Best time to visit Namibia?"
 • "Tell me about Etosha National Park"
 • "What's unique about Himba culture?"
 • "Namibia travel tips"
 
 *Commands:*
-/menu - Interactive system
+/menu - Interactive knowledge system
 /stats - View statistics
 /help - Help information
-/start - Restart me
+/start - Restart bot
 
-🇳🇦 Let's explore Namibia together!"""
+🇳🇦 Let's explore Namibia together! 🦁"""
         
         await update.message.reply_text(welcome, parse_mode="Markdown")
     else:
@@ -589,11 +591,11 @@ Hello everyone! I'm Eva Geises your AI assistant with developed by ScienceTechni
 
 I'm designed for group conversations about Namibia.
 
-*My Roles:*
-• Help you learning about Namibia
-• Act as Tour Guide
-• Handling normal FAQs
-• Discovery Opportunities in Namibia
+*Database Features:*
+• Persistent storage with SQLite
+• Knowledge base with full-text search
+• User activity tracking
+• Query logging
 
 *To use me:*
 1. Add me to a Telegram group
@@ -601,9 +603,9 @@ I'm designed for group conversations about Namibia.
 3. Start asking questions!
 
 *Group Features:*
-• I can respond to any question
-• Check my interactive menus here (/menu)
-• I can welcome new members
+• Intelligent responses to questions
+• Interactive menus (/menu)
+• Welcome new members
 • Conversation engagement
 
 Add me to your group now!"""
@@ -664,7 +666,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Topics: {len(kb_db.get_all_topics())}
 • Categories: {len(kb_db.get_categories())}
 
-Keep exploring Namibia! Ask me anything about our beautiful country, in Africa."""
+Keep exploring Namibia! Ask me anything about our beautiful country. 🦁"""
     
     await update.message.reply_text(stats, parse_mode="Markdown")
 
@@ -824,15 +826,15 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     if update.message.chat.type == 'private':
         user = update.effective_user
         
-        response = """🇳🇦 *Hi, welcome to Namibia! *
+        response = """🇳🇦 *Hi! I'm NamibiaBot*
 
-I'm Eva Geises, an AI assistant designed for conversations about Namibia.
+I'm an AI assistant designed for group conversations about Namibia.
 
-*You can ask me about:*
-• Namibia's culture
-• People and socioeconomy
-• Tourism and wildlife
-• Namibian history
+*Current Features:*
+• Database-powered knowledge base
+• Full-text search capabilities
+• User activity tracking
+• Interactive menu system
 
 *To use me:*
 1. Add me to your Telegram group
@@ -996,8 +998,15 @@ def main():
     print("=" * 60)
     print("🚀 Starting bot...")
     
-    # Create application
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    # Create application with Railway-optimized timeouts
+    app = ApplicationBuilder() \
+        .token(TELEGRAM_BOT_TOKEN) \
+        .connect_timeout(30) \
+        .read_timeout(30) \
+        .write_timeout(30) \
+        .pool_timeout(30) \
+        .get_updates_read_timeout(30) \
+        .build()
     
     # Add command handlers (highest priority)
     app.add_handler(CommandHandler('start', start))
@@ -1027,7 +1036,7 @@ def main():
         handle_private_message
     ))
     
-    # Start bot
+    # Start bot with retry logic for Railway
     print("🤖 Bot is running... Press Ctrl+C to stop")
     print("💡 Test commands in a group:")
     print("   • /start - Initialize bot")
@@ -1036,18 +1045,36 @@ def main():
     print("   • Try 'Tell me about Etosha'")
     print("=" * 60)
     
-    try:
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-            close_loop=False
-        )
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"\n❌ Bot error: {e}")
-        import traceback
-        traceback.print_exc()
+    # Add retry mechanism for Railway network issues
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False
+            )
+            break  # Exit loop if successful
+            
+        except (TimedOut, NetworkError) as e:
+            print(f"❌ Connection error (attempt {attempt + 1}/{max_attempts}): {e}")
+            if attempt < max_attempts - 1:
+                wait_time = 2 ** attempt  # Exponential backoff: 2, 4, 8, 16 seconds
+                print(f"⏳ Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                print(f"❌ Failed to start after {max_attempts} attempts")
+                raise
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user")
+            break
+            
+        except Exception as e:
+            print(f"\n❌ Bot error: {e}")
+            import traceback
+            traceback.print_exc()
+            break
 
 if __name__ == "__main__":
     main()
