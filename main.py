@@ -1,589 +1,541 @@
+#!/usr/bin/env python3
+"""
+Eva - Namibia Chatbot
+Simple, reliable chatbot that answers questions about Namibia
+"""
+
 import os
-import logging
 import random
 import re
 import asyncio
-import time
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
     filters
 )
+
+# Import Database and KnowledgeBase
 from database import Database
 from knowledge_base import KnowledgeBase
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
 
 # =========================================================
 # CONFIGURATION
 # =========================================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN:
-    logger.error("❌ TELEGRAM_BOT_TOKEN not set")
+    print("❌ ERROR: TELEGRAM_BOT_TOKEN not set")
     exit(1)
 
-ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "")
-ADMIN_IDS = set(map(int, ADMIN_IDS_STR.split(','))) if ADMIN_IDS_STR else set()
+# =========================================================
+# INITIALIZE DATABASE
+# =========================================================
+print("📊 Initializing database...")
+db = Database()
+kb = KnowledgeBase()
+print(f"✅ Database ready: {db.db_path}")
+print(f"✅ Knowledge base: {len(kb.get_all_topics())} topics")
 
 # =========================================================
-# EVA GEISES - NAMIBIA BOT ENGINE
+# SIMPLE QUESTION ANSWERING
 # =========================================================
-class EvaGeisesBot:
+class SimpleNamibiaBot:
     def __init__(self):
-        self.db = Database()
-        self.kb = KnowledgeBase()
         self.last_activity = {}
-        self.welcomed_users = set()
-        logger.info(f"🇳🇦 Eva Geises initialized with {len(self.kb.get_all_topics())} topics")
+        print("🤖 Simple Namibia Bot initialized")
     
-    def get_greeting(self):
-        """Get time-appropriate greeting"""
-        hour = datetime.now().hour
-        if 5 <= hour < 12:
-            return "Good morning"
-        elif 12 <= hour < 17:
-            return "Good afternoon"
-        elif 17 <= hour < 21:
-            return "Good evening"
-        else:
-            return "Hello"
-    
-    def analyze_message(self, message, user_id, chat_id):
-        """Analyze if Eva should respond"""
-        msg = message.lower().strip()
-        self.last_activity[str(chat_id)] = datetime.now()
+    def is_question_about_namibia(self, message):
+        """Check if message is asking about Namibia"""
+        message_lower = message.lower().strip()
         
-        response_types = []
+        # Check for Namibia mentions
+        if 'namibia' not in message_lower and 'namibian' not in message_lower:
+            return False
         
-        # 1. Direct mentions - 100%
-        bot_mentions = ["@eva", "eva", "@namibiabot", "namibia bot", "hey bot", "hello bot", "hey eva"]
-        if any(mention in msg for mention in bot_mentions):
-            response_types.append(("search", 100))
-        
-        # 2. Questions - 90%
-        question_words = ["what", "how", "where", "when", "why", "who", "which", 
-                         "can you", "tell me", "explain", "show me", "is", "are", "do", "does"]
-        if "?" in msg or any(msg.startswith(w) for w in question_words):
-            response_types.append(("search", 90))
-        
-        # 3. Greetings - 80%
-        greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", 
-                    "moro", "greetings", "hallo", "howzit"]
-        if any(g in msg.split() for g in greetings):
-            response_types.append(("greeting", 80))
-        
-        # 4. Namibia mentions - 85%
-        if "namibia" in msg or "namibian" in msg:
-            response_types.append(("search", 85))
-        
-        # 5. Specific topics - 90%
-        topics = ["etosha", "sossusvlei", "swakopmund", "windhoek", "himba", "herero", 
-                 "desert", "dunes", "fish river", "cheetah", "elephant", "lion", "wildlife",
-                 "safari", "namib", "capital", "visa", "currency", "weather"]
-        if any(t in msg for t in topics):
-            response_types.append(("search", 90))
-        
-        # 6. Travel keywords - 80%
-        travel = ["travel", "tour", "visit", "trip", "vacation", "holiday", 
-                 "destination", "tourist", "booking"]
-        if any(w in msg for w in travel):
-            response_types.append(("search", 80))
-        
-        # 7. Quiet chat - 30%
-        if self.is_chat_quiet(chat_id, minutes=20):
-            response_types.append(("conversation_starter", 30))
-        
-        if response_types:
-            response_types.sort(key=lambda x: x[1], reverse=True)
-            top = response_types[0]
-            if random.random() < (top[1] / 100):
-                return True, top[0]
-        
-        return False, None
-    
-    def is_chat_quiet(self, chat_id, minutes=20):
-        """Check if chat quiet"""
-        chat_id_str = str(chat_id)
-        if chat_id_str not in self.last_activity:
-            return True
-        return datetime.now() - self.last_activity[chat_id_str] > timedelta(minutes=minutes)
-    
-    def generate_response(self, message, response_type):
-        """Generate Eva's response"""
-        clean_msg = re.sub(r'@[^\s]*', '', message.lower()).strip()
-        clean_msg = re.sub(r'(hey|hello|hi)\s+(eva|bot|namibia)', '', clean_msg).strip()
-        
-        # Search knowledge base
-        if response_type == "search" and clean_msg:
-            results = self.kb.search(clean_msg, limit=3)
-            
-            if results:
-                best = results[0]
-                
-                response = f"🤔 *Based on your question:*\n\n"
-                response += f"**{best['topic']}**\n"
-                response += f"{best['content']}\n\n"
-                
-                # Add related topics
-                if len(results) > 1:
-                    response += "💡 *Related information:*\n"
-                    for r in results[1:]:
-                        response += f"• {r['topic']}\n"
-                    response += "\n"
-                
-                response += f"📱 *Use /menu for more topics or ask another question!*"
-                return response
-            else:
-                return (
-                    "🤔 I searched but couldn't find specific information about that.\n\n"
-                    "Try asking about:\n"
-                    "• Etosha National Park\n"
-                    "• Sossusvlei dunes\n"
-                    "• Himba or Herero people\n"
-                    "• Windhoek capital\n"
-                    "• Wildlife and safaris\n\n"
-                    "📱 Or use /menu to browse all topics!"
-                )
-        
-        # Greeting responses
-        greeting = self.get_greeting()
-        
-        if response_type == "greeting":
-            greetings = [
-                f"👋 {greeting}! How can I help you explore Namibia today?\n\n📱 Use /menu to browse topics!",
-                f"🇳🇦 {greeting}! What would you like to know about Namibia?\n\n💡 Try /menu for categories!",
-                f"🦁 {greeting}! I'm Eva, your Namibia guide. Ask away!\n\n📚 Check /menu for all topics!",
-                f"🏜️ {greeting}! Ready to discover Namibia?\n\n✨ Use /menu to explore!"
-            ]
-            return random.choice(greetings)
-        
-        # Conversation starter
-        if response_type == "conversation_starter":
-            return self.get_conversation_starter()
-        
-        return "🇳🇦 Ask me anything about Namibia!\n\n💡 Try: \"Where is Namibia?\" or use /menu"
-    
-    def get_conversation_starter(self):
-        """Generate conversation starter"""
-        starters = [
-            "💭 *Question for everyone:* What's your dream Namibia destination?\n\n📱 Use /menu to explore destinations!",
-            "🦁 *Wildlife talk:* Who has been on safari in Namibia?\n\n🦓 Check /menu → Wildlife for more!",
-            "🏜️ *Fun fact:* The Namib Desert is 55-80 million years old!\n\n📚 Use /menu for more Namibia facts!",
-            "👥 *Cultural question:* What interests you about Namibia's people?\n\n💡 Try /menu → Culture!",
-            "🗺️ *Travel tip:* Best time to visit is May-October!\n\n✈️ Use /menu → Tourism for planning!",
-            "🌅 *Amazing:* Sossusvlei has the world's highest dunes!\n\n📖 Discover more with /menu!"
+        # Check for question patterns
+        question_patterns = [
+            r'where (?:is|are).*namibia',
+            r'what (?:is|are).*namibia',
+            r'when (?:is|was).*namibia',
+            r'why (?:is|are).*namibia',
+            r'how (?:to|do|can).*namibia',
+            r'who (?:is|are).*namibia',
+            r'tell me about.*namibia',
+            r'explain.*namibia',
+            r'describe.*namibia',
+            r'capital of namibia',
+            r'namibia capital',
+            r'size of namibia',
+            r'namibia size',
+            r'population of namibia',
+            r'namibia population',
+            r'currency of namibia',
+            r'namibia currency',
+            r'language in namibia',
+            r'namibia language',
+            r'weather in namibia',
+            r'namibia weather',
+            r'visit namibia',
+            r'travel to namibia',
+            r'namibia tourism',
+            r'etosha',
+            r'sossusvlei',
+            r'swakopmund',
+            r'windhoek',
+            r'himba',
+            r'herero',
+            r'fish river',
+            r'namib desert',
+            r'cheetah',
+            r'elephant',
+            r'lion',
+            r'safari',
         ]
-        return random.choice(starters)
-    
-    def generate_welcome(self, name):
-        """Welcome new members"""
-        greeting = self.get_greeting()
-        welcomes = [
-            f"👋 {greeting} {name}! I'm Eva Geises, your AI Namibia expert.\n\n💡 Ask me anything or use /menu to explore! 🇳🇦",
-            f"🌟 Welcome {name}! I'm Eva, here to help with all things Namibia!\n\n📱 Try /menu or ask me questions! 🦁",
-            f"🇳🇦 {greeting} {name}! Ready to explore Namibia together?\n\n✨ Use /menu to get started! 🏜️",
-            f"🦓 {greeting} {name}! I'm Eva, your Namibia guide!\n\n📚 Check out /menu or ask away! 🌅"
-        ]
-        return random.choice(welcomes)
-
-# =========================================================
-# INTERACTIVE MENU SYSTEM
-# =========================================================
-class InteractiveMenu:
-    def __init__(self, kb):
-        self.kb = kb
-        self.categories = kb.get_categories()
-    
-    def main_menu(self):
-        """Create main menu"""
-        keyboard = [
-            [InlineKeyboardButton("🏞️ Tourism & Travel", callback_data="cat_Tourism")],
-            [InlineKeyboardButton("📜 History & Heritage", callback_data="cat_History")],
-            [InlineKeyboardButton("👥 Culture & People", callback_data="cat_Culture")],
-            [InlineKeyboardButton("ℹ️ Practical Info", callback_data="cat_Practical")],
-            [InlineKeyboardButton("🦁 Wildlife & Nature", callback_data="cat_Wildlife")],
-            [InlineKeyboardButton("🚀 Quick Facts", callback_data="cat_Facts")],
-            [InlineKeyboardButton("🗺️ Geography", callback_data="cat_Geography")],
-        ]
-        return InlineKeyboardMarkup(keyboard)
-    
-    def back_button(self):
-        """Back button"""
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_back")
-        ]])
-    
-    def format_category(self, category):
-        """Format category content"""
-        topics = self.kb.get_by_category(category)
         
-        emoji_map = {
-            "Tourism": "🏞️", "History": "📜", "Culture": "👥",
-            "Practical": "ℹ️", "Wildlife": "🦁", "Facts": "🚀",
-            "Geography": "🗺️"
+        for pattern in question_patterns:
+            if re.search(pattern, message_lower):
+                return True
+        
+        # Check for question mark
+        if '?' in message_lower:
+            namibia_keywords = ['namibia', 'namibian', 'windhoek', 'etosha', 'sossusvlei', 'swakopmund', 'himba', 'herero']
+            if any(keyword in message_lower for keyword in namibia_keywords):
+                return True
+        
+        return False
+    
+    def find_answer(self, question):
+        """Find answer in knowledge base"""
+        # Clean the question
+        clean_question = question.lower().strip()
+        
+        # Remove common prefixes
+        prefixes = ['what is', 'what are', 'where is', 'where are', 'when is', 'when are', 
+                   'why is', 'why are', 'how is', 'how are', 'who is', 'who are',
+                   'tell me about', 'explain', 'describe', 'can you tell me']
+        
+        for prefix in prefixes:
+            if clean_question.startswith(prefix):
+                clean_question = clean_question[len(prefix):].strip()
+        
+        # Remove question mark
+        clean_question = clean_question.rstrip('?')
+        
+        # Search in knowledge base
+        results = kb.search(clean_question, limit=3)
+        
+        if results:
+            # Return the best match
+            return results[0]
+        
+        # Try searching for specific topics
+        common_questions = {
+            'where is namibia': 'Where is Namibia',
+            'capital of namibia': 'Capital of Namibia',
+            'what is the capital of namibia': 'Capital of Namibia',
+            'size of namibia': 'Size of Namibia',
+            'population of namibia': 'Population Density',
+            'currency of namibia': 'Currency',
+            'weather in namibia': 'Weather',
+            'best time to visit namibia': 'Best time to visit Namibia',
+            'etosha national park': 'Etosha National Park',
+            'sossusvlei': 'Sossusvlei',
+            'swakopmund': 'Swakopmund',
+            'himba people': 'Himba People',
+            'herero people': 'Herero People',
+            'languages in namibia': 'Languages in Namibia',
+            'visa requirements for namibia': 'Visa Requirements',
+            'namib desert': 'Namib Desert',
+            'fish river canyon': 'Fish River Canyon',
+            'desert elephants': 'Desert Adapted Elephants',
+            'desert lions': 'Namib Desert Lions',
+            'cheetahs in namibia': 'Cheetahs',
+            'independence day of namibia': 'Independence Day',
+            'german colonization of namibia': 'German Colonization',
+            'oldest desert': 'Oldest Desert',
+            'dark sky reserve': 'Dark Sky Reserve',
+            'conservation in namibia': 'Conservation',
         }
         
-        emoji = emoji_map.get(category, "📚")
-        content = f"{emoji} *{category}*\n\n"
+        for query, topic in common_questions.items():
+            if query in clean_question:
+                # Search for this specific topic
+                topic_results = kb.search(topic, limit=1)
+                if topic_results:
+                    return topic_results[0]
         
-        if topics:
-            content += "*Available Topics:*\n\n"
-            for i, topic in enumerate(topics, 1):
-                content += f"{i}. {topic['topic']}\n"
-            
-            content += f"\n💡 *Ask me:* \"Tell me about {topics[0]['topic']}\""
-            content += "\n\n📱 *Or select Back to browse other categories*"
-        else:
-            content += "No topics available yet."
+        return None
+    
+    def format_answer(self, result, original_question):
+        """Format the answer nicely"""
+        response = f"🇳🇦 *{result['topic']}*\n\n"
+        response += f"{result['content']}\n\n"
         
-        return content
+        # Add category
+        response += f"📁 *Category:* {result['category']}\n"
+        
+        # Add keywords if available
+        if result.get('keywords'):
+            response += f"🏷️ *Tags:* {result['keywords']}\n"
+        
+        # Add suggestion for more info
+        response += f"\n💡 *Want to know more?* Ask me another question or use /menu"
+        
+        return response
 
 # =========================================================
-# INITIALIZE
+# HANDLERS
 # =========================================================
-eva = EvaGeisesBot()
-menu = InteractiveMenu(eva.kb)
+bot = SimpleNamibiaBot()
 
-# =========================================================
-# COMMAND HANDLERS
-# =========================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start"""
+    """Handle /start command"""
     user = update.effective_user
-    eva.db.add_user(user.id, user.username or "Unknown")
     
-    greeting = eva.get_greeting()
+    # Add user to database
+    db.add_user(user.id, user.username or user.first_name)
     
-    if update.message.chat.type in ['group', 'supergroup']:
-        welcome = f"""🇳🇦 *Eva Geises - Namibia Expert Bot*
+    welcome = f"""👋 *Hello! I'm Eva, your Namibia assistant!*
 
-{greeting} everyone! I'm Eva Geises, your AI-powered Namibia assistant! 🦁
+I can answer your questions about Namibia.
 
-*I can help with:*
-• Tourism & Travel Planning 🏞️
-• Wildlife & Safari Info 🦓
-• Cultural Insights & History 👥
-• Practical Travel Advice ℹ️
-• Geography & Quick Facts 🗺️
-
-*How to use me:*
-• Ask questions naturally - I understand!
-• Mention "Namibia" - I'll join in!
-• Use /menu for organized topics
-• I respond to greetings warmly!
-• I welcome new members automatically!
-
-*Try asking:*
+*Try asking me:*
 • "Where is Namibia?"
-• "Tell me about Etosha"
-• "What's special about Himba?"
-• "Best time to visit?"
+• "What is the capital of Namibia?"
+• "Tell me about Etosha National Park"
+• "Best time to visit Namibia?"
+• "Who are the Himba people?"
 
-*Quick Commands:*
-/menu - Browse categories 📚
-/topics - List all topics 📋
-/stats - Your statistics 📊
-/help - Help info 🆘
-
-🇳🇦 Let's explore Namibia together! 🏜️"""
-        
-        await update.message.reply_text(welcome, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(
-            f"👋 {greeting} {user.first_name}!\n\n"
-            f"I'm Eva Geises, your Namibia expert! 🇳🇦\n\n"
-            f"Add me to a group or ask me anything!\n\n"
-            f"📱 Use /menu to explore topics! 🦁",
-            parse_mode="Markdown"
-        )
-
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /menu"""
-    await update.message.reply_text(
-        "🇳🇦 *Namibia Knowledge System*\n\nWhat would you like to explore?",
-        parse_mode="Markdown",
-        reply_markup=menu.main_menu()
-    )
-
-async def topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /topics"""
-    topics = eva.kb.get_all_topics()
-    
-    if topics:
-        response = "📚 *All Namibia Topics:*\n\n"
-        for i, topic in enumerate(topics, 1):
-            response += f"{i}. {topic}\n"
-        
-        response += f"\n*Total: {len(topics)} topics*\n\n"
-        response += "💡 Ask me about any topic!\n"
-        response += "📱 Or use /menu for organized categories"
-    else:
-        response = "No topics available."
-    
-    await update.message.reply_text(response, parse_mode="Markdown")
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /stats"""
-    user_id = update.effective_user.id
-    
-    if user_id in ADMIN_IDS:
-        all_users = eva.db.get_all_users()
-        popular = eva.db.get_popular_queries(5)
-        
-        stats = f"""📊 *Eva Geises Statistics (Admin)*
-
-*System:*
-• Total users: {len(all_users)}
-• Topics: {len(eva.kb.get_all_topics())}
-• Categories: {len(eva.kb.get_categories())}
-
-*Popular Questions:*
-"""
-        for i, q in enumerate(popular, 1):
-            stats += f"{i}. \"{q['query'][:30]}...\" ({q['count']}x)\n"
-        
-        stats += "\n📱 Status: ✅ Active"
-        await update.message.reply_text(stats, parse_mode="Markdown")
-    else:
-        user_stats = eva.db.get_user_stats(user_id)
-        
-        stats = f"""📊 *Your Statistics*
-
-*Activity:*
-• Questions: {user_stats['query_count']}
-• Since: {user_stats['joined_date'][:10] if user_stats['joined_date'] else 'Recently'}
-
-*Available:*
-• Topics: {len(eva.kb.get_all_topics())}
-• Categories: {len(eva.kb.get_categories())}
-
-📱 Use /menu to explore! 🇳🇦"""
-        
-        await update.message.reply_text(stats, parse_mode="Markdown")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /help"""
-    greeting = eva.get_greeting()
-    
-    help_text = f"""🆘 *Eva Geises - Help*
-
-{greeting}! I'm Eva, your AI Namibia expert! 🇳🇦
-
-*What I know:*
-• Tourism & destinations 🏞️
-• Wildlife & safaris 🦁
-• Culture & people 👥
-• History & heritage 📜
-• Practical travel info ℹ️
-• Geography & facts 🗺️
-
-*How to use me:*
-• Ask natural questions
-• Use /menu for categories
-• I respond to greetings!
-• I join Namibia discussions!
-
-*Examples:*
-"Where is Namibia?"
-"Tell me about Etosha"
-"Himba people culture"
-"Best time to visit?"
+*I know about:*
+• Geography & location
+• Wildlife & national parks  
+• Culture & people
+• Tourism & travel tips
+• History & heritage
+• Practical information
 
 *Commands:*
-/menu - Categories 📚
-/topics - All topics 📋
-/stats - Statistics 📊
-/help - This message 🆘
+/help - Show help
+/menu - Browse topics
+/about - About me
 
-🇳🇦 Ask me anything! 🦁"""
+Ask me anything about Namibia! 🇳🇦"""
+    
+    await update.message.reply_text(welcome, parse_mode="Markdown")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command"""
+    help_text = """🆘 *How to use Eva*
+
+*To ask questions:*
+Just type your question! For example:
+• "Where is Namibia?"
+• "What is Windhoek?"
+• "Tell me about Etosha"
+
+*Commands:*
+/start - Start conversation
+/menu - Browse topics by category
+/help - This help message
+/about - Learn about me
+
+*What I can answer:*
+• Where questions (location)
+• What questions (facts, information)
+• When questions (dates, times)
+• Why questions (reasons)
+• How questions (methods, processes)
+• Tell me about... (explanations)
+
+*Examples of good questions:*
+• "Where is Namibia located?"
+• "What is the capital city?"
+• "When is the best time to visit?"
+• "Why visit Namibia?"
+• "How do I get a visa?"
+• "Tell me about Himba culture"
+
+I'm here to help you learn about beautiful Namibia! 🦁"""
     
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
-async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: add knowledge"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ Admin only.")
-        return
-    
-    if not context.args or '|' not in ' '.join(context.args):
-        await update.message.reply_text(
-            "*Usage:* /add <topic> | <content> | <category> | <keywords>\n\n"
-            "*Example:*\n"
-            "`/add Skeleton Coast | Haunting coastline | Tourism | coast`",
-            parse_mode="Markdown"
-        )
-        return
-    
-    try:
-        parts = ' '.join(context.args).split('|')
-        topic = parts[0].strip()
-        content = parts[1].strip()
-        category = parts[2].strip() if len(parts) > 2 else 'General'
-        keywords = parts[3].strip() if len(parts) > 3 else ''
-        
-        eva.kb.add_knowledge(topic, content, category, keywords)
-        await update.message.reply_text(f"✅ Added: *{topic}*", parse_mode="Markdown")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /about command"""
+    about_text = f"""👋 *About Eva - Namibia Assistant*
 
-async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle group messages"""
-    if update.message.from_user.id == context.bot.id or not update.message.text:
+*Who I am:*
+I'm Eva, an AI assistant created to help people learn about Namibia. I'm powered by a knowledge base with information about Namibia's geography, culture, wildlife, tourism, and history.
+
+*What I know:*
+• {len(kb.get_all_topics())} topics about Namibia
+• {len(kb.get_categories())} categories
+• Information from reliable sources
+
+*My purpose:*
+To make learning about Namibia easy and accessible to everyone!
+
+*How I work:*
+1. You ask a question about Namibia
+2. I search my knowledge base
+3. I provide the most relevant answer
+4. I learn from our conversation
+
+*Features:*
+• Answers questions in natural language
+• Provides detailed information
+• Suggests related topics
+• Tracks conversation context
+
+Ask me anything about Namibia! I'm excited to share with you. 🌟"""
+    
+    await update.message.reply_text(about_text, parse_mode="Markdown")
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /menu command"""
+    categories = kb.get_categories()
+    
+    keyboard = []
+    for category in categories:
+        keyboard.append([InlineKeyboardButton(f"📌 {category}", callback_data=f"cat_{category}")])
+    
+    keyboard.append([InlineKeyboardButton("❓ How to ask questions", callback_data="help_questions")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "📚 *Namibia Knowledge Menu*\n\nSelect a category to explore:",
+        parse_mode="Markdown",
+        reply_markup=reply_markup
+    )
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ALL messages - both group and private"""
+    # Skip if no text
+    if not update.message or not update.message.text:
         return
     
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
+    # Skip bot's own messages
+    if update.message.from_user.id == context.bot.id:
+        return
+    
+    user = update.effective_user
     message = update.message.text
     
-    eva.db.add_user(user_id, update.effective_user.username or "Unknown")
-    eva.db.log_query(user_id, message)
+    print(f"📩 Received message from {user.first_name}: {message[:50]}...")
     
-    should_respond, response_type = eva.analyze_message(message, user_id, chat_id)
+    # Add user to database
+    db.add_user(user.id, user.username or user.first_name)
     
-    if should_respond and response_type:
-        logger.info(f"Eva responding: {message[:50]}... ({response_type})")
-        response = eva.generate_response(message, response_type)
-        
-        if response:
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            
-            try:
-                await update.message.reply_text(
-                    response,
-                    parse_mode="Markdown",
-                    reply_to_message_id=update.message.message_id
-                )
-                logger.info("✅ Response sent")
-            except Exception as e:
-                logger.error(f"Error: {e}")
-
-async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle private messages"""
-    if update.message.text.startswith('/'):
+    # Check if it's a command
+    if message.startswith('/'):
+        # Let command handlers handle it
         return
     
-    user_id = update.effective_user.id
-    message = update.message.text
+    # Check if this is a question about Namibia
+    is_namibia_question = bot.is_question_about_namibia(message)
     
-    results = eva.kb.search(message, limit=3)
+    if is_namibia_question:
+        print(f"🔍 Detected Namibia question: {message[:50]}...")
+        
+        # Log the query
+        db.log_query(user.id, message)
+        
+        # Find answer
+        answer = bot.find_answer(message)
+        
+        if answer:
+            print(f"✅ Found answer for: {message[:50]}...")
+            # Format and send answer
+            response = bot.format_answer(answer, message)
+            await update.message.reply_text(response, parse_mode="Markdown")
+        else:
+            print(f"❌ No answer found for: {message[:50]}...")
+            # Suggest similar questions
+            response = f"🤔 *I'm not sure about:* \"{message}\"\n\n"
+            response += "*Try asking about:*\n"
+            response += "• Where Namibia is located\n"
+            response += "• Namibia's capital city\n"
+            response += "• Best time to visit\n"
+            response += "• Etosha National Park\n"
+            response += "• Himba culture\n\n"
+            response += "Or use /menu to browse topics!"
+            await update.message.reply_text(response, parse_mode="Markdown")
     
-    if results:
-        response = "🔍 *Search Results:*\n\n"
-        for i, r in enumerate(results, 1):
-            response += f"*{i}. {r['topic']}*\n{r['content']}\n\n"
-        response += "📱 Use /menu for organized browsing!"
-    else:
-        response = (
-            "🤔 No specific info found.\n\n"
-            "Try:\n"
-            "• /menu to browse\n"
-            "• Ask about Etosha, Himba, etc.\n\n"
-            "🇳🇦 I know about tourism, wildlife, culture!"
-        )
-    
-    eva.db.log_query(user_id, message)
-    await update.message.reply_text(response, parse_mode="Markdown")
-
-async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome new members"""
-    if update.message.new_chat_members:
-        for member in update.message.new_chat_members:
-            if member.id == context.bot.id:
-                continue
-            
-            if member.id not in eva.welcomed_users:
-                welcome = eva.generate_welcome(member.first_name)
-                eva.db.add_user(member.id, member.username or "Unknown")
-                eva.welcomed_users.add(member.id)
-                
-                await asyncio.sleep(1)
-                await update.message.reply_text(welcome, parse_mode="Markdown")
+    elif update.message.chat.type == 'private':
+        # In private chat, respond even if not clearly about Namibia
+        print(f"💬 Private message: {message[:50]}...")
+        
+        # Check for greetings
+        greetings = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']
+        if any(message.lower().startswith(greet) for greet in greetings):
+            response = f"👋 Hello {user.first_name}! I'm Eva, your Namibia assistant.\n\nAsk me anything about Namibia! For example:\n• \"Where is Namibia?\"\n• \"What is the capital?\"\n• \"Tell me about Etosha\"\n\nI'm here to help! 🇳🇦"
+            await update.message.reply_text(response, parse_mode="Markdown")
+        
+        # Check if it's a question (has ?)
+        elif '?' in message.lower():
+            response = f"🤔 *I'm Eva, your Namibia assistant!*\n\n"
+            response += f"It looks like you asked: \"{message}\"\n\n"
+            response += "*I specialize in questions about Namibia.* Try asking:\n"
+            response += "• \"Where is Namibia?\"\n"
+            response += "• \"What is Windhoek?\"\n"
+            response += "• \"Best time to visit Namibia?\"\n"
+            response += "• \"Tell me about Himba culture\"\n\n"
+            response += "Or use /menu to see all topics I know!"
+            await update.message.reply_text(response, parse_mode="Markdown")
+        
+        else:
+            # Generic private response
+            response = f"👋 Hi {user.first_name}! I'm Eva.\n\n"
+            response += "I'm an AI assistant that helps people learn about Namibia.\n\n"
+            response += "*To get started, ask me a question like:*\n"
+            response += "• \"Where is Namibia?\"\n"
+            response += "• \"What is the capital of Namibia?\"\n"
+            response += "• \"Tell me about Etosha National Park\"\n\n"
+            response += "Or use /help for more information!"
+            await update.message.reply_text(response, parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle buttons"""
+    """Handle button clicks"""
     query = update.callback_query
     await query.answer()
     
     data = query.data
     
-    if data == "menu_back":
-        await query.edit_message_text(
-            "🇳🇦 *Namibia Knowledge System*\n\nWhat would you like to explore?",
-            parse_mode="Markdown",
-            reply_markup=menu.main_menu()
-        )
-    elif data.startswith("cat_"):
-        category = data.replace("cat_", "")
-        content = menu.format_category(category)
+    if data.startswith("cat_"):
+        category = data[4:]  # Remove "cat_" prefix
+        topics = kb.get_by_category(category)
+        
+        if topics:
+            response = f"📚 *{category}*\n\n"
+            for i, topic in enumerate(topics[:10], 1):  # Show first 10
+                response += f"{i}. {topic['topic']}\n"
+            
+            if len(topics) > 10:
+                response += f"\n... and {len(topics) - 10} more topics\n"
+            
+            response += "\n💡 *Ask me about any of these topics!* Example: \"Tell me about [topic name]\""
+            
+            # Add back button
+            keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                response,
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+    
+    elif data == "help_questions":
+        response = """❓ *How to ask questions*
+
+*Good question formats:*
+1. **Where** questions:
+   • "Where is Namibia?"
+   • "Where is Windhoek located?"
+
+2. **What** questions:
+   • "What is the capital of Namibia?"
+   • "What currency does Namibia use?"
+
+3. **When** questions:
+   • "When is the best time to visit?"
+   • "When did Namibia gain independence?"
+
+4. **Tell me about** questions:
+   • "Tell me about Etosha National Park"
+   • "Tell me about Himba culture"
+
+5. **How** questions:
+   • "How do I get a visa for Namibia?"
+   • "How big is Namibia?"
+
+*Just ask naturally!* I'll understand. 🦁"""
+        
+        keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            content,
+            response,
             parse_mode="Markdown",
-            reply_markup=menu.back_button()
+            reply_markup=reply_markup
+        )
+    
+    elif data == "back_menu":
+        categories = kb.get_categories()
+        
+        keyboard = []
+        for category in categories:
+            keyboard.append([InlineKeyboardButton(f"📌 {category}", callback_data=f"cat_{category}")])
+        
+        keyboard.append([InlineKeyboardButton("❓ How to ask questions", callback_data="help_questions")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "📚 *Namibia Knowledge Menu*\n\nSelect a category to explore:",
+            parse_mode="Markdown",
+            reply_markup=reply_markup
         )
 
 # =========================================================
-# MAIN
+# MAIN APPLICATION
 # =========================================================
 def main():
-    """Run Eva"""
-    logger.info("=" * 60)
-    logger.info("🇳🇦 EVA GEISES - NAMIBIA EXPERT")
-    logger.info("=" * 60)
-    logger.info(f"✅ Topics: {len(eva.kb.get_all_topics())}")
-    logger.info(f"✅ Categories: {len(eva.kb.get_categories())}")
-    logger.info("=" * 60)
+    """Start the bot"""
+    print("=" * 60)
+    print("🇳🇦 EVA - NAMIBIA CHATBOT")
+    print("=" * 60)
+    print(f"✅ Bot Token: {'Set' if TELEGRAM_BOT_TOKEN else 'NOT SET!'}")
+    print(f"✅ Database: {db.db_path}")
+    print(f"✅ Knowledge: {len(kb.get_all_topics())} topics")
+    print(f"✅ Categories: {kb.get_categories()}")
+    print("=" * 60)
+    print("✨ Features:")
+    print("   • Direct question answering")
+    print("   • Natural language understanding")
+    print("   • Knowledge base with 25+ topics")
+    print("   • Interactive menu")
+    print("=" * 60)
     
-    app = Application.builder() \
-        .token(TELEGRAM_BOT_TOKEN) \
-        .connect_timeout(15) \
-        .read_timeout(10) \
-        .write_timeout(10) \
-        .build()
+    # Create application
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
+    # Add command handlers
     app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('menu', menu_command))
-    app.add_handler(CommandHandler('topics', topics_command))
-    app.add_handler(CommandHandler('stats', stats_command))
     app.add_handler(CommandHandler('help', help_command))
-    app.add_handler(CommandHandler('add', add_command))
+    app.add_handler(CommandHandler('about', about_command))
+    app.add_handler(CommandHandler('menu', menu_command))
+    
+    # Add button handler
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_group_message))
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_private_message))
     
-    logger.info("🚀 Eva is running...")
+    # Add message handler - HANDLES ALL MESSAGES
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-            break
-        except (TimedOut, NetworkError) as e:
-            logger.error(f"Connection error (attempt {attempt + 1}): {e}")
-            if attempt < max_attempts - 1:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-        except KeyboardInterrupt:
-            logger.info("🛑 Stopped")
-            break
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            break
+    # Start bot
+    print("🤖 Eva is running...")
+    print("💡 Test with these questions:")
+    print("   • 'Where is Namibia?'")
+    print("   • 'What is the capital of Namibia?'")
+    print("   • 'Tell me about Etosha'")
+    print("   • 'Best time to visit Namibia?'")
+    print("=" * 60)
+    
+    try:
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True
+        )
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"\n❌ Bot error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
