@@ -8,11 +8,9 @@ import os
 import random
 import re
 import asyncio
-import time
 from datetime import datetime, timedelta
 from rapidfuzz import fuzz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -138,7 +136,7 @@ class IntelligentKnowledgeBase:
         clean_query = query.strip().lower()
         
         # Try direct search first
-        results = kb_db.search(clean_query, limit=5)  # Reduced from 10 to 5
+        results = kb_db.search(clean_query, limit=10)
         
         enhanced_results = []
         seen_content = set()
@@ -181,7 +179,7 @@ class IntelligentKnowledgeBase:
             expanded_queries = self.expand_query(clean_query)
             for expanded_query in expanded_queries:
                 if expanded_query != clean_query:
-                    synonym_results = kb_db.search(expanded_query, limit=3)  # Reduced from 5 to 3
+                    synonym_results = kb_db.search(expanded_query, limit=5)
                     for result in synonym_results:
                         if result['content'] not in seen_content:
                             enhanced_results.append({
@@ -198,7 +196,7 @@ class IntelligentKnowledgeBase:
         
         # Sort by score
         enhanced_results.sort(key=lambda x: x["score"], reverse=True)
-        return enhanced_results[:3]  # Return top 3 results (reduced from 5)
+        return enhanced_results[:5]  # Return top 5 results
     
     def get_random_fact(self):
         """Get a random fact from knowledge base"""
@@ -316,28 +314,23 @@ class IntelligentNamibiaBot:
         should_search = response_type in ["direct_mention", "question", "specific_topic", "namibia_mention", "travel"]
         
         if clean_message and should_search:
-            # Use async to avoid blocking
-            try:
-                results = self.knowledge_base.intelligent_search(clean_message)
-                if results:
-                    best_result = results[0]
-                    
-                    # Format response
-                    response = f"🤔 *Based on your question:*\n\n"
-                    response += f"**{best_result['item']['question'].title()}**\n"
-                    response += f"{best_result['item']['answer']}\n\n"
-                    
-                    # Add related info if available
-                    related = self.get_related_info(best_result['item']['category'], best_result['item']['question'])
-                    if related:
-                        response += f"💡 *Related information:*\n{related}\n\n"
-                    
-                    # Add interactive element
-                    response += self.get_interactive_suggestion(best_result['item']['category'])
-                    return response
-            except Exception as e:
-                print(f"⚠️ Knowledge search error: {e}")
-                # Fall back to regular response
+            results = self.knowledge_base.intelligent_search(clean_message)
+            if results:
+                best_result = results[0]
+                
+                # Format response
+                response = f"🤔 *Based on your question:*\n\n"
+                response += f"**{best_result['item']['question'].title()}**\n"
+                response += f"{best_result['item']['answer']}\n\n"
+                
+                # Add related info if available
+                related = self.get_related_info(best_result['item']['category'], best_result['item']['question'])
+                if related:
+                    response += f"💡 *Related information:*\n{related}\n\n"
+                
+                # Add interactive element
+                response += self.get_interactive_suggestion(best_result['item']['category'])
+                return response
         
         # Generate appropriate response based on type
         responses = {
@@ -400,7 +393,7 @@ class IntelligentNamibiaBot:
         category_items = self.knowledge_base.get_by_category(category)
         
         if category_items:
-            for item in category_items[:3]:  # Limit to 3 items
+            for item in category_items:
                 if isinstance(item, dict) and 'topic' in item:
                     if item['topic'].lower() != current_question.lower() and len(related_items) < 2:
                         related_items.append(f"• {item['topic'].title()}")
@@ -782,8 +775,8 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         response = bot_instance.generate_response(message, response_type, user_id)
         
         if response:
-            # Reduced delay for faster response
-            delay = random.uniform(0.3, 1.0)  # Reduced from 0.5-2.0 to 0.3-1.0
+            # Natural delay for realistic interaction
+            delay = random.uniform(0.5, 2.0)
             await asyncio.sleep(delay)
             
             # Send response
@@ -823,7 +816,7 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
             bot_instance.welcomed_users.add(new_member.id)
             
             # Send welcome message with delay
-            await asyncio.sleep(0.5)  # Reduced from 1 second
+            await asyncio.sleep(1)
             await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 
 async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1003,16 +996,8 @@ def main():
     print("=" * 60)
     print("🚀 Starting bot...")
     
-    # Create application with OPTIMIZED timeouts for Railway
-    # Increased just enough to prevent timeout, but not too much
-    app = ApplicationBuilder() \
-        .token(TELEGRAM_BOT_TOKEN) \
-        .connect_timeout(15) \
-        .read_timeout(10) \
-        .write_timeout(10) \
-        .pool_timeout(10) \
-        .get_updates_read_timeout(15) \
-        .build()
+    # Create application
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
     # Add command handlers (highest priority)
     app.add_handler(CommandHandler('start', start))
@@ -1042,7 +1027,7 @@ def main():
         handle_private_message
     ))
     
-    # Start bot with retry logic for Railway
+    # Start bot
     print("🤖 Bot is running... Press Ctrl+C to stop")
     print("💡 Test commands in a group:")
     print("   • /start - Initialize bot")
@@ -1051,37 +1036,18 @@ def main():
     print("   • Try 'Tell me about Etosha'")
     print("=" * 60)
     
-    # Add retry mechanism for Railway network issues
-    max_attempts = 3  # Reduced from 5 attempts
-    for attempt in range(max_attempts):
-        try:
-            app.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                close_loop=False,
-                poll_interval=1.0  # Increased from default 0.1 for better performance
-            )
-            break  # Exit loop if successful
-            
-        except (TimedOut, NetworkError) as e:
-            print(f"❌ Connection error (attempt {attempt + 1}/{max_attempts}): {e}")
-            if attempt < max_attempts - 1:
-                wait_time = 2 ** attempt  # Exponential backoff: 2, 4 seconds
-                print(f"⏳ Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                print(f"❌ Failed to start after {max_attempts} attempts")
-                raise
-                
-        except KeyboardInterrupt:
-            print("\n🛑 Bot stopped by user")
-            break
-            
-        except Exception as e:
-            print(f"\n❌ Bot error: {e}")
-            import traceback
-            traceback.print_exc()
-            break
+    try:
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            close_loop=False
+        )
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"\n❌ Bot error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
