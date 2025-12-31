@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Eva - Namibia Chatbot
-Simple, reliable chatbot that answers questions about Namibia
+Intelligent Namibia Chatbot with Database Integration
+Main bot file that connects Telegram interface with database and knowledge base
 """
 
 import os
 import random
 import re
 import asyncio
+import time
 from datetime import datetime, timedelta
+from rapidfuzz import fuzz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -19,7 +22,7 @@ from telegram.ext import (
     filters
 )
 
-# Import Database and KnowledgeBase
+# Import Database and KnowledgeBase classes
 from database import Database
 from knowledge_base import KnowledgeBase
 
@@ -28,514 +31,1057 @@ from knowledge_base import KnowledgeBase
 # =========================================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN:
-    print("❌ ERROR: TELEGRAM_BOT_TOKEN not set")
+    print("❌ ERROR: TELEGRAM_BOT_TOKEN not set in Railway variables")
     exit(1)
 
+# Parse admin IDs
+ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "")
+ADMIN_IDS = set()
+if ADMIN_IDS_STR:
+    try:
+        ADMIN_IDS = set(map(int, ADMIN_IDS_STR.split(',')))
+    except:
+        pass
+
 # =========================================================
-# INITIALIZE DATABASE
+# DATABASE INITIALIZATION
 # =========================================================
 print("📊 Initializing database...")
 db = Database()
-kb = KnowledgeBase()
-print(f"✅ Database ready: {db.db_path}")
-print(f"✅ Knowledge base: {len(kb.get_all_topics())} topics")
+kb_db = KnowledgeBase()
+print(f"✅ Database initialized: {db.db_path}")
+print(f"✅ Knowledge Base: {len(kb_db.get_all_topics())} topics available")
 
 # =========================================================
-# SIMPLE QUESTION ANSWERING
+# USER PROFILES & GROUP STATISTICS
 # =========================================================
-class SimpleNamibiaBot:
+class UserProfile:
+    """User profile management using Database"""
     def __init__(self):
-        self.last_activity = {}
-        print("🤖 Simple Namibia Bot initialized")
+        print("👤 User profile system initialized")
     
-    def is_question_about_namibia(self, message):
-        """Check if message is asking about Namibia"""
+    def get_user(self, user_id):
+        """Get user stats from database"""
+        return db.get_user_stats(user_id)
+    
+    def update_user_activity(self, user_id, username="", full_name=""):
+        """Update user activity in database"""
+        # Use username or full_name if available
+        name_to_use = username or full_name or f"User_{user_id}"
+        db.add_user(user_id, name_to_use)
+    
+    def increment_bot_interaction(self, user_id):
+        """Log bot interaction"""
+        db.log_query(user_id, "bot_interaction")
+    
+    def log_query(self, user_id, query):
+        """Log user query to database"""
+        if query and query.strip():
+            db.log_query(user_id, query.strip())
+
+user_profiles = UserProfile()
+
+# =========================================================
+# INTELLIGENT KNOWLEDGE BASE SYSTEM
+# =========================================================
+class IntelligentKnowledgeBase:
+    """Enhanced knowledge base with fuzzy matching"""
+    def __init__(self):
+        print(f"🧠 Intelligent knowledge base initialized")
+        self.setup_synonyms()
+        self.all_topics = kb_db.get_all_topics()
+        self.categories = kb_db.get_categories()
+    
+    def setup_synonyms(self):
+        """Setup synonym dictionary for intelligent matching"""
+        self.synonyms = {
+            'namibia': ['namibian', 'namibias', 'namib'],
+            'windhoek': ['capital', 'city', 'main city'],
+            'etosha': ['etosha park', 'national park', 'wildlife park'],
+            'sossusvlei': ['sand dunes', 'namib desert', 'dunes', 'red dunes'],
+            'swakopmund': ['coastal town', 'german town', 'beach town', 'coast'],
+            'fish river': ['canyon', 'fish river canyon', 'hiking canyon'],
+            'himba': ['red people', 'ochre people', 'tribal people', 'indigenous'],
+            'herero': ['victorian dress', 'traditional dress', 'herero women'],
+            'visa': ['entry requirements', 'travel documents', 'permit'],
+            'currency': ['money', 'cash', 'nad', 'namibian dollar'],
+            'weather': ['climate', 'temperature', 'season', 'rain'],
+            'wildlife': ['animals', 'safari', 'game', 'fauna'],
+            'history': ['past', 'historical', 'heritage'],
+            'culture': ['people', 'traditions', 'customs', 'ethnic'],
+            'travel': ['tourism', 'visit', 'vacation', 'holiday', 'trip'],
+            'desert': ['arid', 'dry', 'sand', 'namib'],
+            'elephant': ['elephants', 'pachyderm'],
+            'lion': ['lions', 'big cat', 'predator'],
+            'cheetah': ['cheetahs', 'fastest animal']
+        }
+    
+    def expand_query(self, query):
+        """Expand query with synonyms"""
+        query_lower = query.lower()
+        expanded = [query_lower]
+        
+        for word, synonyms in self.synonyms.items():
+            if word in query_lower:
+                for synonym in synonyms:
+                    expanded_query = query_lower.replace(word, synonym)
+                    if expanded_query not in expanded:
+                        expanded.append(expanded_query)
+        
+        return expanded
+    
+    def intelligent_search(self, query, threshold=60):
+        """Intelligent search using database knowledge base"""
+        if not query or not query.strip():
+            return []
+        
+        clean_query = query.strip().lower()
+        
+        # Try direct search first
+        results = kb_db.search(clean_query, limit=5)  # Reduced from 10 to 5
+        
+        enhanced_results = []
+        seen_content = set()
+        
+        for result in results:
+            if result['content'] in seen_content:
+                continue
+            
+            # Calculate relevance scores
+            topic_match = fuzz.partial_ratio(clean_query, result['topic'].lower())
+            content_match = fuzz.partial_ratio(clean_query, result['content'].lower())
+            
+            # Keyword matching
+            keywords = result.get('keywords', '').split(',') if result.get('keywords') else []
+            keyword_score = 0
+            if keywords:
+                query_words = set(re.findall(r'\b\w+\b', clean_query.lower()))
+                keyword_set = set(k.strip().lower() for k in keywords if k.strip())
+                common = query_words & keyword_set
+                if common:
+                    keyword_score = (len(common) / max(len(query_words), len(keyword_set))) * 100
+            
+            best_score = max(topic_match, content_match, keyword_score)
+            
+            if best_score > threshold:
+                enhanced_results.append({
+                    "item": {
+                        "category": result['category'],
+                        "question": result['topic'],
+                        "answer": result['content'],
+                        "keywords": keywords
+                    },
+                    "score": best_score,
+                    "matched_query": clean_query
+                })
+                seen_content.add(result['content'])
+        
+        # If no results, try synonym expansion
+        if not enhanced_results:
+            expanded_queries = self.expand_query(clean_query)
+            for expanded_query in expanded_queries:
+                if expanded_query != clean_query:
+                    synonym_results = kb_db.search(expanded_query, limit=3)  # Reduced from 5 to 3
+                    for result in synonym_results:
+                        if result['content'] not in seen_content:
+                            enhanced_results.append({
+                                "item": {
+                                    "category": result['category'],
+                                    "question": result['topic'],
+                                    "answer": result['content'],
+                                    "keywords": result.get('keywords', '').split(',') if result.get('keywords') else []
+                                },
+                                "score": 75,  # Good match via synonym
+                                "matched_query": expanded_query
+                            })
+                            seen_content.add(result['content'])
+        
+        # Sort by score
+        enhanced_results.sort(key=lambda x: x["score"], reverse=True)
+        return enhanced_results[:3]  # Return top 3 results (reduced from 5)
+    
+    def get_random_fact(self):
+        """Get a random fact from knowledge base"""
+        if self.all_topics:
+            random_topic = random.choice(self.all_topics)
+            results = kb_db.search(random_topic, limit=1)
+            if results:
+                return {
+                    "question": results[0]['topic'],
+                    "answer": results[0]['content'],
+                    "category": results[0]['category']
+                }
+        return None
+    
+    def get_by_category(self, category):
+        """Get all topics in a category"""
+        return kb_db.get_by_category(category)
+
+# =========================================================
+# INTELLIGENT CHATBOT ENGINE
+# =========================================================
+class IntelligentNamibiaBot:
+    """Main chatbot engine"""
+    def __init__(self):
+        self.knowledge_base = IntelligentKnowledgeBase()
+        self.conversation_context = {}
+        self.user_interests = {}
+        self.last_activity = {}
+        self.welcomed_users = set()
+        print("🤖 Intelligent Namibia Bot initialized")
+    
+    def analyze_message(self, message, user_id, chat_id):
+        """Intelligently analyze message for response"""
         message_lower = message.lower().strip()
         
-        # Check for Namibia mentions
-        if 'namibia' not in message_lower and 'namibian' not in message_lower:
-            return False
+        # Update activity
+        self.last_activity[str(chat_id)] = datetime.now()
         
-        # Check for question patterns
-        question_patterns = [
-            r'where (?:is|are).*namibia',
-            r'what (?:is|are).*namibia',
-            r'when (?:is|was).*namibia',
-            r'why (?:is|are).*namibia',
-            r'how (?:to|do|can).*namibia',
-            r'who (?:is|are).*namibia',
-            r'tell me about.*namibia',
-            r'explain.*namibia',
-            r'describe.*namibia',
-            r'capital of namibia',
-            r'namibia capital',
-            r'size of namibia',
-            r'namibia size',
-            r'population of namibia',
-            r'namibia population',
-            r'currency of namibia',
-            r'namibia currency',
-            r'language in namibia',
-            r'namibia language',
-            r'weather in namibia',
-            r'namibia weather',
-            r'visit namibia',
-            r'travel to namibia',
-            r'namibia tourism',
-            r'etosha',
-            r'sossusvlei',
-            r'swakopmund',
-            r'windhoek',
-            r'himba',
-            r'herero',
-            r'fish river',
-            r'namib desert',
-            r'cheetah',
-            r'elephant',
-            r'lion',
-            r'safari',
-        ]
-        
-        for pattern in question_patterns:
-            if re.search(pattern, message_lower):
-                return True
-        
-        # Check for question mark
-        if '?' in message_lower:
-            namibia_keywords = ['namibia', 'namibian', 'windhoek', 'etosha', 'sossusvlei', 'swakopmund', 'himba', 'herero']
-            if any(keyword in message_lower for keyword in namibia_keywords):
-                return True
-        
-        return False
+        # Get response decision
+        return self.decide_response(message_lower, user_id, chat_id)
     
-    def find_answer(self, question):
-        """Find answer in knowledge base"""
-        # Clean the question
-        clean_question = question.lower().strip()
+    def decide_response(self, message, user_id, chat_id):
+        """Intelligently decide whether and how to respond"""
+        response_types = []
         
-        # Remove common prefixes
-        prefixes = ['what is', 'what are', 'where is', 'where are', 'when is', 'when are', 
-                   'why is', 'why are', 'how is', 'how are', 'who is', 'who are',
-                   'tell me about', 'explain', 'describe', 'can you tell me']
+        # 1. Direct mentions (100% response)
+        bot_mentions = ["@namibiabot", "@namibia_bot", "namibia bot", "hey bot", "hello bot", "bot,", "bot!"]
+        if any(mention in message for mention in bot_mentions):
+            response_types.append(("direct_mention", 100))
         
-        for prefix in prefixes:
-            if clean_question.startswith(prefix):
-                clean_question = clean_question[len(prefix):].strip()
+        # 2. Greetings (70% response)
+        greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", "moro", "greetings"]
+        if any(greeting in message.lower().split() for greeting in greetings):
+            response_types.append(("greeting", 70))
         
-        # Remove question mark
-        clean_question = clean_question.rstrip('?')
+        # 3. Questions with ? or question words (80% response)
+        question_words = ["what", "how", "where", "when", "why", "who", "which", "can you", "tell me", "explain"]
+        if "?" in message or any(message.lower().startswith(word) for word in question_words):
+            response_types.append(("question", 80))
         
-        # Search in knowledge base
-        results = kb.search(clean_question, limit=3)
+        # 4. Namibia mentions (60% response)
+        if "namibia" in message.lower() or "namibian" in message.lower():
+            response_types.append(("namibia_mention", 60))
         
-        if results:
-            # Return the best match
-            return results[0]
+        # 5. Knowledge base topics (75% response)
+        kb_topics = ["etosha", "sossusvlei", "swakopmund", "windhoek", "himba", "herero", "desert", "dunes", "fish river", "cheetah", "elephant", "lion"]
+        if any(topic in message.lower() for topic in kb_topics):
+            response_types.append(("specific_topic", 75))
         
-        # Try searching for specific topics
-        common_questions = {
-            'where is namibia': 'Where is Namibia',
-            'capital of namibia': 'Capital of Namibia',
-            'what is the capital of namibia': 'Capital of Namibia',
-            'size of namibia': 'Size of Namibia',
-            'population of namibia': 'Population Density',
-            'currency of namibia': 'Currency',
-            'weather in namibia': 'Weather',
-            'best time to visit namibia': 'Best time to visit Namibia',
-            'etosha national park': 'Etosha National Park',
-            'sossusvlei': 'Sossusvlei',
-            'swakopmund': 'Swakopmund',
-            'himba people': 'Himba People',
-            'herero people': 'Herero People',
-            'languages in namibia': 'Languages in Namibia',
-            'visa requirements for namibia': 'Visa Requirements',
-            'namib desert': 'Namib Desert',
-            'fish river canyon': 'Fish River Canyon',
-            'desert elephants': 'Desert Adapted Elephants',
-            'desert lions': 'Namib Desert Lions',
-            'cheetahs in namibia': 'Cheetahs',
-            'independence day of namibia': 'Independence Day',
-            'german colonization of namibia': 'German Colonization',
-            'oldest desert': 'Oldest Desert',
-            'dark sky reserve': 'Dark Sky Reserve',
-            'conservation in namibia': 'Conservation',
+        # 6. Travel keywords (50% response)
+        travel_words = ["travel", "tour", "visit", "trip", "vacation", "holiday", "safari", "destination", "tourist"]
+        if any(word in message.lower() for word in travel_words):
+            response_types.append(("travel", 50))
+        
+        # 7. If no specific triggers, check for conversation starter
+        if self.is_chat_quiet(chat_id, minutes=20):
+            if random.random() < 0.4:  # 40% chance if chat is quiet
+                response_types.append(("conversation_starter", 40))
+        
+        # Sort by priority
+        if response_types:
+            response_types.sort(key=lambda x: x[1], reverse=True)
+            top_response = response_types[0]
+            
+            # Check if we should respond based on probability
+            if top_response[1] >= 40 and random.random() < (top_response[1] / 100):
+                return True, top_response[0]
+        
+        return False, None
+    
+    def is_chat_quiet(self, chat_id, minutes=5):
+        """Check if chat has been quiet"""
+        chat_id_str = str(chat_id)
+        if chat_id_str not in self.last_activity:
+            return True
+        
+        last_active = self.last_activity[chat_id_str]
+        quiet_time = datetime.now() - last_active
+        
+        return quiet_time > timedelta(minutes=minutes)
+    
+    def generate_response(self, message, response_type, user_id=None):
+        """Generate intelligent response based on type"""
+        message_lower = message.lower().strip()
+        
+        # Clean message for knowledge search
+        clean_message = re.sub(r'@[^\s]*', '', message_lower)
+        clean_message = re.sub(r'(hey|hello)\s+(bot|namibia)', '', clean_message).strip()
+        
+        # Log the query to database
+        if user_id and clean_message:
+            user_profiles.log_query(user_id, clean_message)
+        
+        # Always try knowledge base search for relevant response types
+        should_search = response_type in ["direct_mention", "question", "specific_topic", "namibia_mention", "travel"]
+        
+        if clean_message and should_search:
+            # Use async to avoid blocking
+            try:
+                results = self.knowledge_base.intelligent_search(clean_message)
+                if results:
+                    best_result = results[0]
+                    
+                    # Format response
+                    response = f"🤔 *Based on your question:*\n\n"
+                    response += f"**{best_result['item']['question'].title()}**\n"
+                    response += f"{best_result['item']['answer']}\n\n"
+                    
+                    # Add related info if available
+                    related = self.get_related_info(best_result['item']['category'], best_result['item']['question'])
+                    if related:
+                        response += f"💡 *Related information:*\n{related}\n\n"
+                    
+                    # Add interactive element
+                    response += self.get_interactive_suggestion(best_result['item']['category'])
+                    return response
+            except Exception as e:
+                print(f"⚠️ Knowledge search error: {e}")
+                # Fall back to regular response
+        
+        # Generate appropriate response based on type
+        responses = {
+            "direct_mention": [
+                "🇳🇦 Yes, I'm here! What would you like to know about Namibia?",
+                "🦁 Hello! I'm your Namibia expert. Ask me anything!",
+                "🏜️ NamibiaBot at your service! How can I help you today?",
+                "🇳🇦 Heard my name! Ready to explore Namibia together?"
+            ],
+            "greeting": [
+                "🇳🇦 Hello there! Ready to explore Namibia together?",
+                "👋 Hi! I'm excited to chat about Namibia with you!",
+                "🇳🇦 Moro! (That's hello in Oshiwambo) 🇳🇦",
+                "👋 Welcome to the Namibia discussion! How can I assist you today?"
+            ],
+            "question": [
+                "💡 That's an interesting question about Namibia! Let me share what I know...",
+                "🤔 I might have information about that. Could you try rephrasing?",
+                "🇳🇦 Interesting question! Try asking about specific topics like 'Etosha National Park' or 'Himba culture'.",
+                "🧐 I'm learning more about Namibia every day! For now, try /menu for organized information."
+            ],
+            "namibia_mention": [
+                "🌟 You mentioned Namibia! My favorite topic!",
+                "🦁 Talking about Namibia? I have so much to share!",
+                "🏜️ Namibia is truly amazing, isn't it?",
+                "🇳🇦 Ah, talking about my favorite country! What would you like to know?"
+            ],
+            "specific_topic": [
+                "🎯 That's a specific Namibia topic! I might have information on that.",
+                "📚 I know about many Namibia topics. Try asking more specifically!",
+                "🔍 Good topic! For detailed information, try /menu → Wildlife & Nature",
+                "🎯 That's one of Namibia's highlights! Use /menu for organized info."
+            ],
+            "travel": [
+                "🗺️ Planning a Namibia adventure? I can help!",
+                "🦓 Safari planning is exciting! Namibia has incredible wildlife.",
+                "🌅 Travel to Namibia will be unforgettable!",
+                "🎒 Need travel tips for Namibia? I'm your guide!"
+            ],
+            "conversation_starter": self.get_conversation_starter()
         }
         
-        for query, topic in common_questions.items():
-            if query in clean_question:
-                # Search for this specific topic
-                topic_results = kb.search(topic, limit=1)
-                if topic_results:
-                    return topic_results[0]
+        if response_type in responses:
+            if isinstance(responses[response_type], list):
+                response = random.choice(responses[response_type])
+            else:
+                response = responses[response_type]
+            
+            # Add knowledge base suggestion 40% of time
+            if random.random() < 0.4 and response_type not in ["conversation_starter"]:
+                response += "\n\n" + self.get_knowledge_suggestion()
+            
+            return response
         
         return None
     
-    def format_answer(self, result, original_question):
-        """Format the answer nicely"""
-        response = f"🇳🇦 *{result['topic']}*\n\n"
-        response += f"{result['content']}\n\n"
+    def get_related_info(self, category, current_question):
+        """Get related information from same category"""
+        related_items = []
+        category_items = self.knowledge_base.get_by_category(category)
         
-        # Add category
-        response += f"📁 *Category:* {result['category']}\n"
+        if category_items:
+            for item in category_items[:3]:  # Limit to 3 items
+                if isinstance(item, dict) and 'topic' in item:
+                    if item['topic'].lower() != current_question.lower() and len(related_items) < 2:
+                        related_items.append(f"• {item['topic'].title()}")
         
-        # Add keywords if available
-        if result.get('keywords'):
-            response += f"🏷️ *Tags:* {result['keywords']}\n"
+        if related_items:
+            return "\n".join(related_items)
+        return ""
+    
+    def get_interactive_suggestion(self, category):
+        """Get interactive suggestion based on category"""
+        suggestions = {
+            "Tourism": "🌍 *Want more travel tips?* Try /menu → Tourism",
+            "Culture": "👥 *Interested in people?* Try /menu → Culture",
+            "History": "📜 *More history?* Try /menu → History",
+            "Geography": "🗺️ *Geography questions?* Try /menu → Quick Facts",
+            "Wildlife": "🦓 *Wildlife lover?* Try /menu → Wildlife & Nature",
+            "Practical": "ℹ️ *Practical questions?* Try /menu → Practical Info",
+            "Facts": "🚀 *More facts?* Try /menu → Quick Facts"
+        }
         
-        # Add suggestion for more info
-        response += f"\n💡 *Want to know more?* Ask me another question or use /menu"
-        
-        return response
+        return suggestions.get(category, "📱 *Explore more:* Use /menu for categories")
+    
+    def get_knowledge_suggestion(self):
+        """Get random knowledge base suggestion"""
+        suggestions = [
+            "💡 *Did you know?* I can answer specific questions about Namibia! Try asking me anything.",
+            "🔍 *Curious?* Ask me about Namibia's wildlife, culture, or travel tips!",
+            "📚 *Knowledge base:* I have information on 20+ Namibia topics. What interests you?",
+            "🤔 *Question time:* What would you like to know about Namibia today?"
+        ]
+        return random.choice(suggestions)
+    
+    def get_conversation_starter(self):
+        """Get intelligent conversation starter"""
+        starters = [
+            "💭 *Thought for the group:* What's your dream Namibia destination?",
+            "🦁 *Wildlife question:* Who has seen desert-adapted animals in Namibia?",
+            "🏜️ *Desert discussion:* What fascinates you most about the Namib Desert?",
+            "👥 *Cultural curiosity:* What Namibia culture would you like to learn about?",
+            "🗺️ *Travel talk:* What's the most surprising thing about Namibia travel?",
+            "🌅 *Sunrise question:* Has anyone experienced sunrise at Sossusvlei?"
+        ]
+        return random.choice(starters)
+    
+    def generate_welcome_message(self, new_member_name):
+        """Generate personalized welcome message"""
+        welcomes = [
+            f"👋 Welcome to the group, {new_member_name}! I'm an AI Assistant, here to help with all things Namibia! 🇳🇦",
+            f"🌟 Hello {new_member_name}! Great to have you here. Ask me anything about Namibia's wildlife, culture, or travel tips! 🦁",
+            f"🇳🇦 Welcome {new_member_name}! Ready to explore Namibia together? I'm your AI assistant for all Namibia topics! 🏜️",
+            f"🦓 Greetings {new_member_name}! I'm here to make your Namibia discussions more engaging. Feel free to ask questions! 🌅"
+        ]
+        return random.choice(welcomes)
 
 # =========================================================
-# HANDLERS
+# INTERACTIVE MENU SYSTEM
 # =========================================================
-bot = SimpleNamibiaBot()
+class InteractiveMenu:
+    """Interactive menu system using database categories"""
+    def __init__(self):
+        self.categories = kb_db.get_categories()
+        print(f"📋 Menu system initialized with {len(self.categories)} categories")
+    
+    def create_main_menu(self):
+        """Create enhanced main menu using database categories"""
+        keyboard = []
+        
+        # Map database categories to menu items with emojis
+        category_emojis = {
+            "Tourism": "🏞️",
+            "History": "📜",
+            "Culture": "👥",
+            "Practical": "ℹ️",
+            "Wildlife": "🦓",
+            "Geography": "🗺️",
+            "Facts": "🚀"
+        }
+        
+        # Add database categories
+        for category in self.categories:
+            emoji = category_emojis.get(category, "📌")
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{emoji} {category}", 
+                    callback_data=f"menu_{category.lower()}"
+                )
+            ])
+        
+        # Add admin button if user is admin
+        keyboard.append([
+            InlineKeyboardButton("📊 Statistics", callback_data="menu_stats"),
+            InlineKeyboardButton("❓ Help", callback_data="menu_help")
+        ])
+        
+        return InlineKeyboardMarkup(keyboard)
+    
+    def create_category_menu(self, category):
+        """Create submenu for a specific category"""
+        topics = kb_db.get_by_category(category)
+        keyboard = []
+        
+        if topics:
+            # Add up to 8 topics as buttons
+            for i, topic in enumerate(topics[:8]):
+                topic_name = topic['topic'][:25] + "..." if len(topic['topic']) > 25 else topic['topic']
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"📌 {topic_name}", 
+                        callback_data=f"topic_{i}_{category.lower()}"
+                    )
+                ])
+        
+        # Add navigation buttons
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Back", callback_data="menu_back"),
+            InlineKeyboardButton("🏠 Home", callback_data="menu_home")
+        ])
+        
+        return InlineKeyboardMarkup(keyboard)
+    
+    def get_category_info(self, category):
+        """Get information about a category"""
+        topics = kb_db.get_by_category(category)
+        
+        if topics:
+            response = f"*{category}*\n\n"
+            response += f"*Total Topics:* {len(topics)}\n\n"
+            
+            # Show first 3 topics as examples
+            for i, topic in enumerate(topics[:3]):
+                response += f"• {topic['topic']}\n"
+            
+            if len(topics) > 3:
+                response += f"\n... and {len(topics) - 3} more topics\n\n"
+            
+            response += "Select a topic below for detailed information:"
+            
+            return response
+        else:
+            return f"*{category}*\n\nNo topics found in this category."
 
+# =========================================================
+# BOT INSTANCES
+# =========================================================
+bot_instance = IntelligentNamibiaBot()
+menu_system = InteractiveMenu()
+
+# =========================================================
+# COMMAND HANDLERS
+# =========================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
     
     # Add user to database
-    db.add_user(user.id, user.username or user.first_name)
+    user_profiles.update_user_activity(user.id, user.username, user.first_name)
     
-    welcome = f"""👋 *Hello! I'm Eva, your Namibia assistant!*
+    if update.message.chat.type in ['group', 'supergroup']:
+        welcome = f"""🇳🇦 *Intelligent NamibiaBot v2.0*
 
-I can answer your questions about Namibia.
+Hello everyone! I'm your AI-powered Namibia assistant with database integration! 🧠
 
-*Try asking me:*
-• "Where is Namibia?"
-• "What is the capital of Namibia?"
-• "Tell me about Etosha National Park"
+*Database Features:*
+• 📊 User tracking with SQLite
+• 🔍 Full-text search (FTS5)
+• 📚 {len(kb_db.get_all_topics())} knowledge topics
+• 🏷️ {len(kb_db.get_categories())} organized categories
+
+*How to use me:*
+1. Ask questions about Namibia
+2. Use /menu for organized categories
+3. Tag me (@namibiabot) for direct answers
+4. I'll welcome new members automatically
+
+*Try asking:*
 • "Best time to visit Namibia?"
-• "Who are the Himba people?"
-
-*I know about:*
-• Geography & location
-• Wildlife & national parks  
-• Culture & people
-• Tourism & travel tips
-• History & heritage
-• Practical information
+• "Tell me about Etosha National Park"
+• "What's unique about Himba culture?"
+• "Namibia travel tips"
 
 *Commands:*
-/help - Show help
-/menu - Browse topics
-/about - About me
+/menu - Interactive knowledge system
+/stats - View statistics
+/help - Help information
+/start - Restart bot
 
-Ask me anything about Namibia! 🇳🇦"""
-    
-    await update.message.reply_text(welcome, parse_mode="Markdown")
+🇳🇦 Let's explore Namibia together! 🦁"""
+        
+        await update.message.reply_text(welcome, parse_mode="Markdown")
+    else:
+        # Private message response
+        response = f"""🇳🇦 Hi {user.first_name}! I'm an AI Assistant.
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /help command"""
-    help_text = """🆘 *How to use Eva*
+I'm designed for group conversations about Namibia.
 
-*To ask questions:*
-Just type your question! For example:
-• "Where is Namibia?"
-• "What is Windhoek?"
-• "Tell me about Etosha"
+*Database Features:*
+• Persistent storage with SQLite
+• Knowledge base with full-text search
+• User activity tracking
+• Query logging
 
-*Commands:*
-/start - Start conversation
-/menu - Browse topics by category
-/help - This help message
-/about - Learn about me
+*To use me:*
+1. Add me to a Telegram group
+2. Use /start in the group
+3. Start asking questions!
 
-*What I can answer:*
-• Where questions (location)
-• What questions (facts, information)
-• When questions (dates, times)
-• Why questions (reasons)
-• How questions (methods, processes)
-• Tell me about... (explanations)
+*Group Features:*
+• Intelligent responses to questions
+• Interactive menus (/menu)
+• Welcome new members
+• Conversation engagement
 
-*Examples of good questions:*
-• "Where is Namibia located?"
-• "What is the capital city?"
-• "When is the best time to visit?"
-• "Why visit Namibia?"
-• "How do I get a visa?"
-• "Tell me about Himba culture"
-
-I'm here to help you learn about beautiful Namibia! 🦁"""
-    
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
-async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /about command"""
-    about_text = f"""👋 *About Eva - Namibia Assistant*
-
-*Who I am:*
-I'm Eva, an AI assistant created to help people learn about Namibia. I'm powered by a knowledge base with information about Namibia's geography, culture, wildlife, tourism, and history.
-
-*What I know:*
-• {len(kb.get_all_topics())} topics about Namibia
-• {len(kb.get_categories())} categories
-• Information from reliable sources
-
-*My purpose:*
-To make learning about Namibia easy and accessible to everyone!
-
-*How I work:*
-1. You ask a question about Namibia
-2. I search my knowledge base
-3. I provide the most relevant answer
-4. I learn from our conversation
-
-*Features:*
-• Answers questions in natural language
-• Provides detailed information
-• Suggests related topics
-• Tracks conversation context
-
-Ask me anything about Namibia! I'm excited to share with you. 🌟"""
-    
-    await update.message.reply_text(about_text, parse_mode="Markdown")
+Add me to your group now!"""
+        
+        await update.message.reply_text(response, parse_mode="Markdown")
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /menu command"""
-    categories = kb.get_categories()
-    
-    keyboard = []
-    for category in categories:
-        keyboard.append([InlineKeyboardButton(f"📌 {category}", callback_data=f"cat_{category}")])
-    
-    keyboard.append([InlineKeyboardButton("❓ How to ask questions", callback_data="help_questions")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
-        "📚 *Namibia Knowledge Menu*\n\nSelect a category to explore:",
+        "🧠 *Namibia Knowledge System*\n\nSelect a category to explore:",
         parse_mode="Markdown",
-        reply_markup=reply_markup
+        reply_markup=menu_system.create_main_menu()
     )
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle ALL messages - both group and private"""
-    # Skip if no text
-    if not update.message or not update.message.text:
-        return
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /stats command"""
+    user_id = update.effective_user.id
     
+    # Get user stats from database
+    user_stats = db.get_user_stats(user_id)
+    
+    # Get popular queries
+    popular_queries = db.get_popular_queries(5)
+    
+    # Get all users
+    all_users = db.get_all_users()
+    
+    if ADMIN_IDS and user_id in ADMIN_IDS:
+        # Admin stats
+        stats = f"""📊 *Database Statistics (Admin View)*
+
+*User Statistics:*
+• Total users: {len(all_users)}
+• Active users: {sum(1 for user in all_users)}
+• Your query count: {user_stats['query_count']}
+
+*Knowledge Base:*
+• Topics: {len(kb_db.get_all_topics())}
+• Categories: {len(kb_db.get_categories())}
+• Database: {db.db_path}
+
+*Popular Queries:*
+"""
+        for i, query in enumerate(popular_queries, 1):
+            stats += f"{i}. {query['query'][:30]}... ({query['count']}x)\n"
+        
+        stats += f"\n*System Status:* Active ✅"
+    else:
+        # User stats
+        stats = f"""📊 *Your NamibiaBot Statistics*
+
+*Your Activity:*
+• Queries made: {user_stats['query_count']}
+• Joined: {user_stats['joined_date'][:10] if user_stats['joined_date'] != 'Unknown' else 'Recently'}
+• Last active: {user_stats['last_query'][:19] if user_stats['last_query'] else 'Now'}
+
+*Knowledge Available:*
+• Topics: {len(kb_db.get_all_topics())}
+• Categories: {len(kb_db.get_categories())}
+
+Keep exploring Namibia! Ask me anything about our beautiful country. 🦁"""
+    
+    await update.message.reply_text(stats, parse_mode="Markdown")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command"""
+    help_text = """🆘 *NamibiaBot Help*
+
+*Database-Powered Features:*
+• SQLite database for persistence
+• Full-text search with FTS5
+• User activity tracking
+• Query history logging
+
+*How to interact:*
+1. Ask questions about Namibia
+2. Use /menu for organized categories
+3. Tag me (@namibiabot) for direct answers
+4. Welcome new members automatically
+
+*Available Commands:*
+/start - Start or restart the bot
+/menu - Interactive knowledge system
+/stats - View your statistics
+/help - This help message
+/add_knowledge - Add new knowledge (admin)
+
+*Ask about:*
+• Wildlife & Nature 🦓
+• Tourism & Travel 🏞️
+• Culture & People 👥
+• History & Heritage 📜
+• Practical Information ℹ️
+• Geography & Facts 🗺️
+
+All your interactions are stored in our database for better assistance!"""
+    
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def add_knowledge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to add knowledge"""
+    user_id = update.effective_user.id
+    
+    if ADMIN_IDS and user_id in ADMIN_IDS:
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /add_knowledge <topic> | <content> | [category] | [keywords]\n\n"
+                "Example: /add_knowledge Windhoek | Capital city of Namibia | Geography | capital, city",
+                parse_mode="Markdown"
+            )
+            return
+        
+        # Parse arguments
+        text = ' '.join(context.args)
+        parts = text.split('|')
+        
+        if len(parts) < 2:
+            await update.message.reply_text("Error: Need at least topic and content separated by |")
+            return
+        
+        topic = parts[0].strip()
+        content = parts[1].strip()
+        category = parts[2].strip() if len(parts) > 2 else "General"
+        keywords = parts[3].strip() if len(parts) > 3 else ""
+        
+        # Add to knowledge base
+        kb_db.add_knowledge(topic, content, category, keywords)
+        
+        await update.message.reply_text(
+            f"✅ *Knowledge Added Successfully*\n\n"
+            f"**Topic:** {topic}\n"
+            f"**Category:** {category}\n"
+            f"**Keywords:** {keywords}\n\n"
+            f"*Content preview:*\n{content[:200]}...",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("This command is for administrators only.")
+
+# =========================================================
+# MESSAGE HANDLERS
+# =========================================================
+async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle all group messages intelligently"""
     # Skip bot's own messages
     if update.message.from_user.id == context.bot.id:
         return
     
-    user = update.effective_user
-    message = update.message.text
-    
-    print(f"📩 Received message from {user.first_name}: {message[:50]}...")
-    
-    # Add user to database
-    db.add_user(user.id, user.username or user.first_name)
-    
-    # Check if it's a command
-    if message.startswith('/'):
-        # Let command handlers handle it
+    # Skip non-text messages
+    if not update.message.text:
         return
     
-    # Check if this is a question about Namibia
-    is_namibia_question = bot.is_question_about_namibia(message)
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    message = update.message.text
+    username = update.effective_user.username or ""
+    full_name = update.effective_user.full_name
     
-    if is_namibia_question:
-        print(f"🔍 Detected Namibia question: {message[:50]}...")
-        
-        # Log the query
-        db.log_query(user.id, message)
-        
-        # Find answer
-        answer = bot.find_answer(message)
-        
-        if answer:
-            print(f"✅ Found answer for: {message[:50]}...")
-            # Format and send answer
-            response = bot.format_answer(answer, message)
-            await update.message.reply_text(response, parse_mode="Markdown")
-        else:
-            print(f"❌ No answer found for: {message[:50]}...")
-            # Suggest similar questions
-            response = f"🤔 *I'm not sure about:* \"{message}\"\n\n"
-            response += "*Try asking about:*\n"
-            response += "• Where Namibia is located\n"
-            response += "• Namibia's capital city\n"
-            response += "• Best time to visit\n"
-            response += "• Etosha National Park\n"
-            response += "• Himba culture\n\n"
-            response += "Or use /menu to browse topics!"
-            await update.message.reply_text(response, parse_mode="Markdown")
+    # Update user in database
+    user_profiles.update_user_activity(user_id, username, full_name)
     
-    elif update.message.chat.type == 'private':
-        # In private chat, respond even if not clearly about Namibia
-        print(f"💬 Private message: {message[:50]}...")
+    # Analyze message and decide response
+    should_respond, response_type = bot_instance.analyze_message(message, user_id, chat_id)
+    
+    if should_respond and response_type:
+        print(f"🤖 Response triggered: {response_type} for: {message[:50]}...")
         
-        # Check for greetings
-        greetings = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']
-        if any(message.lower().startswith(greet) for greet in greetings):
-            response = f"👋 Hello {user.first_name}! I'm Eva, your Namibia assistant.\n\nAsk me anything about Namibia! For example:\n• \"Where is Namibia?\"\n• \"What is the capital?\"\n• \"Tell me about Etosha\"\n\nI'm here to help! 🇳🇦"
-            await update.message.reply_text(response, parse_mode="Markdown")
+        # Generate intelligent response
+        response = bot_instance.generate_response(message, response_type, user_id)
         
-        # Check if it's a question (has ?)
-        elif '?' in message.lower():
-            response = f"🤔 *I'm Eva, your Namibia assistant!*\n\n"
-            response += f"It looks like you asked: \"{message}\"\n\n"
-            response += "*I specialize in questions about Namibia.* Try asking:\n"
-            response += "• \"Where is Namibia?\"\n"
-            response += "• \"What is Windhoek?\"\n"
-            response += "• \"Best time to visit Namibia?\"\n"
-            response += "• \"Tell me about Himba culture\"\n\n"
-            response += "Or use /menu to see all topics I know!"
-            await update.message.reply_text(response, parse_mode="Markdown")
-        
-        else:
-            # Generic private response
-            response = f"👋 Hi {user.first_name}! I'm Eva.\n\n"
-            response += "I'm an AI assistant that helps people learn about Namibia.\n\n"
-            response += "*To get started, ask me a question like:*\n"
-            response += "• \"Where is Namibia?\"\n"
-            response += "• \"What is the capital of Namibia?\"\n"
-            response += "• \"Tell me about Etosha National Park\"\n\n"
-            response += "Or use /help for more information!"
-            await update.message.reply_text(response, parse_mode="Markdown")
+        if response:
+            # Reduced delay for faster response
+            delay = random.uniform(0.3, 1.0)  # Reduced from 0.5-2.0 to 0.3-1.0
+            await asyncio.sleep(delay)
+            
+            # Send response
+            try:
+                await update.message.reply_text(
+                    response,
+                    parse_mode="Markdown",
+                    reply_to_message_id=update.message.message_id
+                )
+                
+                # Track interaction
+                user_profiles.increment_bot_interaction(user_id)
+                
+                print(f"✅ Sent response: {response_type}")
+            except Exception as e:
+                print(f"❌ Error sending response: {e}")
 
+async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new members joining the group"""
+    if update.message.new_chat_members:
+        for new_member in update.message.new_chat_members:
+            # Skip if the new member is the bot itself
+            if new_member.id == context.bot.id:
+                continue
+            
+            # Add to database
+            user_profiles.update_user_activity(
+                new_member.id, 
+                new_member.username or "", 
+                new_member.full_name
+            )
+            
+            # Generate welcome message
+            welcome_msg = bot_instance.generate_welcome_message(new_member.first_name)
+            
+            # Add to welcomed users set
+            bot_instance.welcomed_users.add(new_member.id)
+            
+            # Send welcome message with delay
+            await asyncio.sleep(0.5)  # Reduced from 1 second
+            await update.message.reply_text(welcome_msg, parse_mode="Markdown")
+
+async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle private messages"""
+    if update.message.chat.type == 'private':
+        user = update.effective_user
+        
+        response = """🇳🇦 *Hi! I'm NamibiaBot*
+
+I'm an AI assistant designed for group conversations about Namibia.
+
+*Current Features:*
+• Database-powered knowledge base
+• Full-text search capabilities
+• User activity tracking
+• Interactive menu system
+
+*To use me:*
+1. Add me to your Telegram group
+2. Type /start in the group
+3. Start asking questions about Namibia!
+
+*In groups, I can:*
+• Answer questions intelligently
+• Provide detailed information
+• Welcome new members
+• Start conversations
+• Help with travel planning
+
+Add me to a group and let's explore Namibia together! 🦁"""
+        
+        await update.message.reply_text(response, parse_mode="Markdown")
+
+# =========================================================
+# BUTTON HANDLER
+# =========================================================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button clicks"""
+    """Handle all button interactions"""
     query = update.callback_query
     await query.answer()
     
     data = query.data
     
-    if data.startswith("cat_"):
-        category = data[4:]  # Remove "cat_" prefix
-        topics = kb.get_by_category(category)
-        
-        if topics:
-            response = f"📚 *{category}*\n\n"
-            for i, topic in enumerate(topics[:10], 1):  # Show first 10
-                response += f"{i}. {topic['topic']}\n"
-            
-            if len(topics) > 10:
-                response += f"\n... and {len(topics) - 10} more topics\n"
-            
-            response += "\n💡 *Ask me about any of these topics!* Example: \"Tell me about [topic name]\""
-            
-            # Add back button
-            keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_menu")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                response,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-    
-    elif data == "help_questions":
-        response = """❓ *How to ask questions*
-
-*Good question formats:*
-1. **Where** questions:
-   • "Where is Namibia?"
-   • "Where is Windhoek located?"
-
-2. **What** questions:
-   • "What is the capital of Namibia?"
-   • "What currency does Namibia use?"
-
-3. **When** questions:
-   • "When is the best time to visit?"
-   • "When did Namibia gain independence?"
-
-4. **Tell me about** questions:
-   • "Tell me about Etosha National Park"
-   • "Tell me about Himba culture"
-
-5. **How** questions:
-   • "How do I get a visa for Namibia?"
-   • "How big is Namibia?"
-
-*Just ask naturally!* I'll understand. 🦁"""
-        
-        keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_menu")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+    if data == "menu_back":
+        # Return to main menu
         await query.edit_message_text(
-            response,
+            "🧠 *Namibia Knowledge System*\n\nSelect a category to explore:",
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            reply_markup=menu_system.create_main_menu()
         )
     
-    elif data == "back_menu":
-        categories = kb.get_categories()
+    elif data == "menu_home":
+        # Return to start
+        await query.edit_message_text(
+            "🏠 *Main Menu*\n\nUse /menu to explore categories or ask me anything about Namibia!",
+            parse_mode="Markdown"
+        )
+    
+    elif data == "menu_stats":
+        # Show statistics
+        user_id = query.from_user.id
+        user_stats = db.get_user_stats(user_id)
         
-        keyboard = []
-        for category in categories:
-            keyboard.append([InlineKeyboardButton(f"📌 {category}", callback_data=f"cat_{category}")])
+        stats_text = f"""📊 *Your Statistics*
+
+*Activity:*
+• Queries: {user_stats['query_count']}
+• Joined: {user_stats['joined_date'][:10] if user_stats['joined_date'] != 'Unknown' else 'Recently'}
+• Last active: Now
+
+*Knowledge Base:*
+• Topics: {len(kb_db.get_all_topics())}
+• Categories: {len(kb_db.get_categories())}"""
         
-        keyboard.append([InlineKeyboardButton("❓ How to ask questions", callback_data="help_questions")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="menu_back")]]
         
         await query.edit_message_text(
-            "📚 *Namibia Knowledge Menu*\n\nSelect a category to explore:",
+            stats_text,
             parse_mode="Markdown",
-            reply_markup=reply_markup
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data == "menu_help":
+        # Show help
+        help_text = """❓ *Quick Help*
+
+*How to use:*
+• Ask questions about Namibia
+• Use buttons to explore categories
+• Tag me for direct answers
+
+*Commands:*
+/menu - Show this menu
+/stats - Your statistics
+/help - Detailed help
+
+Select a category to explore!"""
+        
+        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="menu_back")]]
+        
+        await query.edit_message_text(
+            help_text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data.startswith("menu_"):
+        # Handle category menu
+        category_name = data.replace("menu_", "").capitalize()
+        category_info = menu_system.get_category_info(category_name)
+        
+        await query.edit_message_text(
+            category_info,
+            parse_mode="Markdown",
+            reply_markup=menu_system.create_category_menu(category_name)
+        )
+    
+    elif data.startswith("topic_"):
+        # Handle topic selection
+        parts = data.split("_")
+        if len(parts) >= 3:
+            topic_index = int(parts[1])
+            category = parts[2].capitalize()
+            
+            topics = kb_db.get_by_category(category)
+            
+            if topics and 0 <= topic_index < len(topics):
+                topic = topics[topic_index]
+                
+                response = f"**{topic['topic']}**\n\n"
+                response += f"{topic['content']}\n\n"
+                
+                if topic.get('keywords'):
+                    response += f"*Keywords:* {topic['keywords']}\n\n"
+                
+                response += f"*Category:* {category}"
+                
+                keyboard = [
+                    [InlineKeyboardButton("⬅️ Back to Category", callback_data=f"menu_{category.lower()}")],
+                    [InlineKeyboardButton("🏠 Home", callback_data="menu_home")]
+                ]
+                
+                await query.edit_message_text(
+                    response,
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                return
+        
+        # Fallback
+        await query.edit_message_text(
+            "Topic information not found. Please try another topic.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="menu_back")]])
         )
 
 # =========================================================
 # MAIN APPLICATION
 # =========================================================
 def main():
-    """Start the bot"""
+    """Main application entry point"""
     print("=" * 60)
-    print("🇳🇦 EVA - NAMIBIA CHATBOT")
+    print("🇳🇦 INTELLIGENT NAMIBIA CHATBOT")
     print("=" * 60)
-    print(f"✅ Bot Token: {'Set' if TELEGRAM_BOT_TOKEN else 'NOT SET!'}")
+    print(f"✅ Bot Token: {'Set' if TELEGRAM_BOT_TOKEN else 'Not Set'}")
     print(f"✅ Database: {db.db_path}")
-    print(f"✅ Knowledge: {len(kb.get_all_topics())} topics")
-    print(f"✅ Categories: {kb.get_categories()}")
+    print(f"✅ Knowledge Base: {len(kb_db.get_all_topics())} topics")
+    print(f"✅ Categories: {len(kb_db.get_categories())}")
+    print(f"✅ Admin IDs: {len(ADMIN_IDS)} configured")
     print("=" * 60)
-    print("✨ Features:")
-    print("   • Direct question answering")
-    print("   • Natural language understanding")
-    print("   • Knowledge base with 25+ topics")
-    print("   • Interactive menu")
+    print("✨ Features Enabled:")
+    print("   • SQLite database with FTS5 search")
+    print("   • Intelligent response system")
+    print("   • Interactive menu system")
+    print("   • User activity tracking")
+    print("   • Query logging and analytics")
     print("=" * 60)
+    print("🚀 Starting bot...")
     
-    # Create application
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    # Create application with OPTIMIZED timeouts for Railway
+    # Increased just enough to prevent timeout, but not too much
+    app = ApplicationBuilder() \
+        .token(TELEGRAM_BOT_TOKEN) \
+        .connect_timeout(15) \
+        .read_timeout(10) \
+        .write_timeout(10) \
+        .pool_timeout(10) \
+        .get_updates_read_timeout(15) \
+        .build()
     
-    # Add command handlers
+    # Add command handlers (highest priority)
     app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('help', help_command))
-    app.add_handler(CommandHandler('about', about_command))
     app.add_handler(CommandHandler('menu', menu_command))
+    app.add_handler(CommandHandler('stats', stats_command))
+    app.add_handler(CommandHandler('help', help_command))
+    app.add_handler(CommandHandler('add_knowledge', add_knowledge_command))
     
-    # Add button handler
+    # Button handler
     app.add_handler(CallbackQueryHandler(button_handler))
     
-    # Add message handler - HANDLES ALL MESSAGES
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # New member handler
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS,
+        handle_new_members
+    ))
     
-    # Start bot
-    print("🤖 Eva is running...")
-    print("💡 Test with these questions:")
-    print("   • 'Where is Namibia?'")
-    print("   • 'What is the capital of Namibia?'")
-    print("   • 'Tell me about Etosha'")
-    print("   • 'Best time to visit Namibia?'")
+    # Group message handler
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.GROUPS,
+        handle_group_message
+    ))
+    
+    # Private message handler (lowest priority)
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.PRIVATE,
+        handle_private_message
+    ))
+    
+    # Start bot with retry logic for Railway
+    print("🤖 Bot is running... Press Ctrl+C to stop")
+    print("💡 Test commands in a group:")
+    print("   • /start - Initialize bot")
+    print("   • /menu - Show interactive menu")
+    print("   • Ask 'What is the capital of Namibia?'")
+    print("   • Try 'Tell me about Etosha'")
     print("=" * 60)
     
-    try:
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"\n❌ Bot error: {e}")
-        import traceback
-        traceback.print_exc()
+    # Add retry mechanism for Railway network issues
+    max_attempts = 3  # Reduced from 5 attempts
+    for attempt in range(max_attempts):
+        try:
+            app.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False,
+                poll_interval=1.0  # Increased from default 0.1 for better performance
+            )
+            break  # Exit loop if successful
+            
+        except (TimedOut, NetworkError) as e:
+            print(f"❌ Connection error (attempt {attempt + 1}/{max_attempts}): {e}")
+            if attempt < max_attempts - 1:
+                wait_time = 2 ** attempt  # Exponential backoff: 2, 4 seconds
+                print(f"⏳ Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                print(f"❌ Failed to start after {max_attempts} attempts")
+                raise
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user")
+            break
+            
+        except Exception as e:
+            print(f"\n❌ Bot error: {e}")
+            import traceback
+            traceback.print_exc()
+            break
 
 if __name__ == "__main__":
     main()
