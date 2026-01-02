@@ -1,5 +1,5 @@
 import os
-import httpx
+import requests
 import json
 import logging
 
@@ -42,29 +42,29 @@ class GrokAI:
                 {"role": "user", "content": user_message}
             ]
             
-            # Call Grok API
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    self.api_url,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "grok-beta",
-                        "messages": messages,
-                        "temperature": 0.7,
-                        "max_tokens": 500
-                    }
-                )
+            # Call Grok API using requests
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "grok-beta",
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 500
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                logger.error(f"Grok API error: {response.status_code}")
+                return None
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result["choices"][0]["message"]["content"]
-                else:
-                    logger.error(f"Grok API error: {response.status_code}")
-                    return None
-                    
         except Exception as e:
             logger.error(f"Grok AI error: {e}")
             return None
@@ -110,28 +110,28 @@ Response style:
         prompt = f"Generate a warm, friendly welcome message for {member_name} joining our Namibia group. Use '{greeting}' as greeting. Keep it brief (2-3 sentences), enthusiastic, and mention you're Eva, an AI assistant. Include 🇳🇦 emoji and mention /menu."
         
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(
-                    self.api_url,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "grok-beta",
-                        "messages": [
-                            {"role": "system", "content": "You are Eva Geises, a friendly Namibia AI assistant."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.8,
-                        "max_tokens": 150
-                    }
-                )
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "grok-beta",
+                    "messages": [
+                        {"role": "system", "content": "You are Eva Geises, a friendly Namibia AI assistant."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.8,
+                    "max_tokens": 150
+                },
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result["choices"][0]["message"]["content"]
-                    
         except Exception as e:
             logger.error(f"Grok welcome error: {e}")
         
@@ -145,28 +145,28 @@ Response style:
         prompt = "Generate a short, engaging conversation starter about Namibia for a Telegram group. It should be a question or interesting fact. Keep it to 1-2 sentences. Include relevant emoji and mention /menu."
         
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(
-                    self.api_url,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "grok-beta",
-                        "messages": [
-                            {"role": "system", "content": "You are Eva Geises, a friendly Namibia AI assistant."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.9,
-                        "max_tokens": 100
-                    }
-                )
+            response = requests.post(
+                self.api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "grok-beta",
+                    "messages": [
+                        {"role": "system", "content": "You are Eva Geises, a friendly Namibia AI assistant."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.9,
+                    "max_tokens": 100
+                },
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result["choices"][0]["message"]["content"]
-                    
         except Exception as e:
             logger.error(f"Grok starter error: {e}")
         
