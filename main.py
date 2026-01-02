@@ -4,7 +4,6 @@ import random
 import re
 import asyncio
 import time
-import json
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TimedOut, NetworkError
@@ -18,7 +17,6 @@ from telegram.ext import (
 )
 from database import Database
 from knowledge_base import KnowledgeBase
-import aiohttp
 
 # Configure logging
 logging.basicConfig(
@@ -38,192 +36,16 @@ if not TELEGRAM_BOT_TOKEN:
 ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS = set(map(int, ADMIN_IDS_STR.split(','))) if ADMIN_IDS_STR else set()
 
-GROK_API_KEY = os.environ.get("GROK_API_KEY")
-GROK_API_URL = "https://api.x.ai/v1/chat/completions"
-
 # =========================================================
-# CONVERSATION MEMORY SYSTEM
-# =========================================================
-class ConversationMemory:
-    def __init__(self, max_history=10):
-        self.memories = {}
-        self.max_history = max_history
-    
-    def add_conversation(self, chat_id, user_id, message, response):
-        """Store conversation history"""
-        if chat_id not in self.memories:
-            self.memories[chat_id] = []
-        
-        self.memories[chat_id].append({
-            'user_id': user_id,
-            'message': message,
-            'response': response,
-            'timestamp': datetime.now()
-        })
-        
-        # Keep only recent conversations
-        if len(self.memories[chat_id]) > self.max_history:
-            self.memories[chat_id] = self.memories[chat_id][-self.max_history:]
-    
-    def get_context(self, chat_id, user_id=None, limit=5):
-        """Get conversation context for Grok"""
-        if chat_id not in self.memories:
-            return ""
-        
-        context = []
-        for conv in self.memories[chat_id][-limit:]:
-            if user_id and conv['user_id'] != user_id:
-                continue
-            
-            context.append(f"User: {conv['message']}")
-            context.append(f"Eva: {conv['response']}")
-        
-        return "\n".join(context)
-    
-    def clear_chat(self, chat_id):
-        """Clear chat history"""
-        if chat_id in self.memories:
-            del self.memories[chat_id]
-
-# =========================================================
-# GROUP MANAGEMENT SYSTEM
-# =========================================================
-class GroupManager:
-    def __init__(self):
-        self.group_data = {}
-        self.scheduled_greetings = {}
-    
-    async def schedule_daily_greeting(self, context, chat_id):
-        """Schedule daily greetings"""
-        job = context.job_queue.run_daily(
-            self.send_daily_greeting,
-            time=datetime.time(datetime.now().replace(hour=9, minute=0, second=0)),
-            data=chat_id,
-            name=f"daily_greeting_{chat_id}"
-        )
-        self.scheduled_greetings[chat_id] = job
-    
-    async def send_daily_greeting(self, context):
-        """Send daily greeting"""
-        chat_id = context.job.data
-        eva = context.bot_data.get('eva')
-        
-        if eva:
-            greetings = [
-                "🌅 *Good morning Namibia explorers!* Ready for another day of adventure? 🇳🇦",
-                "☀️ *Morning everyone!* What's your Namibia question today? I'm here to help! 🦁",
-                "🇳🇦 *Good morning!* Did you know Namibia has the world's oldest desert? Ask me anything! 🏜️",
-                "🦓 *Rise and shine!* Perfect time to plan your Namibia safari! Use /menu to explore! 🌅"
-            ]
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=random.choice(greetings),
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logger.error(f"Daily greeting error: {e}")
-    
-    def get_member_welcome(self, name, count):
-        """Different welcome messages based on member count"""
-        if count < 10:
-            welcomes = [
-                f"👋 Welcome {name}! You're helping us grow our Namibia community! 🇳🇦",
-                f"🌟 {name}, welcome to our small but passionate Namibia group! 🦁",
-                f"🇳🇦 Hello {name}! Great to have you in our Namibia circle! 🏜️"
-            ]
-        elif count < 50:
-            welcomes = [
-                f"👋 Welcome {name}! You're joining {count-1} other Namibia enthusiasts! 🇳🇦",
-                f"🌟 {name}, welcome aboard! We're {count} strong now! 🦁",
-                f"🇳🇦 Hello {name}! Great timing - we just hit {count} members! 🏜️"
-            ]
-        else:
-            welcomes = [
-                f"👋 Welcome {name}! You're member #{count} in our growing Namibia community! 🇳🇦",
-                f"🌟 {name}, welcome! You're joining {count-1} fellow Namibia explorers! 🦁",
-                f"🇳🇦 Hello {name}! Our community of {count} members welcomes you! 🏜️"
-            ]
-        
-        return random.choice(welcomes)
-
-# =========================================================
-# GROK API INTEGRATION
-# =========================================================
-class GrokIntegration:
-    def __init__(self, api_key, base_url=GROK_API_URL):
-        self.api_key = api_key
-        self.base_url = base_url
-        self.session = None
-        self.enabled = bool(api_key)
-    
-    async def __aenter__(self):
-        self.session = aiohttp.ClientSession()
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            await self.session.close()
-    
-    async def get_response(self, message, context="", system_prompt=None):
-        """Get response from Grok API"""
-        if not self.enabled or not self.api_key:
-            return None
-        
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        if system_prompt is None:
-            system_prompt = """You are Eva Geises, an AI Namibia expert bot. You're friendly, knowledgeable, and passionate about Namibia. 
-            You provide accurate information about Namibia's tourism, wildlife, culture, history, and geography.
-            You're integrated with a knowledge base, so use that information when available.
-            Keep responses conversational but informative.
-            Always maintain a positive, welcoming tone.
-            Use emojis occasionally but not excessively.
-            Respond in Markdown format when helpful."""
-        
-        full_context = f"{system_prompt}\n\nContext from previous conversations:\n{context}\n\nCurrent question: {message}"
-        
-        payload = {
-            "model": "grok-beta",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": full_context}
-            ],
-            "max_tokens": 500,
-            "temperature": 0.7,
-            "top_p": 0.9
-        }
-        
-        try:
-            async with self.session.post(self.base_url, headers=headers, json=payload) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                else:
-                    logger.error(f"Grok API error: {response.status}")
-                    return None
-        except Exception as e:
-            logger.error(f"Grok API connection error: {e}")
-            return None
-
-# =========================================================
-# ENHANCED EVA GEISES BOT
+# EVA GEISES - NAMIBIA BOT ENGINE
 # =========================================================
 class EvaGeisesBot:
     def __init__(self):
         self.db = Database()
         self.kb = KnowledgeBase()
-        self.memory = ConversationMemory()
-        self.group_manager = GroupManager()
-        self.grok = GrokIntegration(GROK_API_KEY)
         self.last_activity = {}
         self.welcomed_users = set()
-        self.conversation_state = {}
-        logger.info(f"🇳🇦 Enhanced Eva Geises initialized with {len(self.kb.get_all_topics())} topics")
+        logger.info(f"🇳🇦 Eva Geises initialized with {len(self.kb.get_all_topics())} topics")
     
     def get_greeting(self):
         """Get time-appropriate greeting"""
@@ -238,25 +60,14 @@ class EvaGeisesBot:
             return "Hello"
     
     def analyze_message(self, message, user_id, chat_id):
-        """Enhanced message analysis with conversation understanding"""
+        """Analyze if Eva should respond"""
         msg = message.lower().strip()
         self.last_activity[str(chat_id)] = datetime.now()
-        
-        # Store conversation state
-        chat_key = str(chat_id)
-        if chat_key not in self.conversation_state:
-            self.conversation_state[chat_key] = {
-                'last_topic': None,
-                'question_count': 0,
-                'last_user': None
-            }
-        
-        state = self.conversation_state[chat_key]
         
         response_types = []
         
         # 1. Direct mentions - 100%
-        bot_mentions = ["@eva", "eva", "@namibiabot", "namibia bot", "hey bot", "hello bot", "hey eva", "eva,", "eva!"]
+        bot_mentions = ["@eva", "eva", "@namibiabot", "namibia bot", "hey bot", "hello bot", "hey eva"]
         if any(mention in msg for mention in bot_mentions):
             response_types.append(("search", 100))
         
@@ -268,7 +79,7 @@ class EvaGeisesBot:
         
         # 3. Greetings - 80%
         greetings = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", 
-                    "moro", "greetings", "hallo", "howzit", "sup", "yo "]
+                    "moro", "greetings", "hallo", "howzit"]
         if any(g in msg.split() for g in greetings):
             response_types.append(("greeting", 80))
         
@@ -279,91 +90,52 @@ class EvaGeisesBot:
         # 5. Specific topics - 90%
         topics = ["etosha", "sossusvlei", "swakopmund", "windhoek", "himba", "herero", 
                  "desert", "dunes", "fish river", "cheetah", "elephant", "lion", "wildlife",
-                 "safari", "namib", "capital", "visa", "currency", "weather", "accommodation",
-                 "hotel", "lodging", "tour", "guide", "car rental", "flight"]
+                 "safari", "namib", "capital", "visa", "currency", "weather"]
         if any(t in msg for t in topics):
             response_types.append(("search", 90))
         
         # 6. Travel keywords - 80%
         travel = ["travel", "tour", "visit", "trip", "vacation", "holiday", 
-                 "destination", "tourist", "booking", "flight", "hotel", "stay"]
+                 "destination", "tourist", "booking"]
         if any(w in msg for w in travel):
             response_types.append(("search", 80))
         
-        # 7. Conversation continuation - Check if continuing same topic
-        if state['last_user'] == user_id and state['question_count'] > 0:
-            response_types.append(("conversation", 70))
-        
-        # 8. Quiet chat - 30%
-        if self.is_chat_quiet(chat_id, minutes=15):
-            response_types.append(("conversation_starter", 40))
-        
-        # 9. Group management keywords
-        mgmt_keywords = ["rules", "welcome", "introduce", "about group", "group info"]
-        if any(keyword in msg for keyword in mgmt_keywords):
-            response_types.append(("group_info", 95))
+        # 7. Quiet chat - 30%
+        if self.is_chat_quiet(chat_id, minutes=20):
+            response_types.append(("conversation_starter", 30))
         
         if response_types:
             response_types.sort(key=lambda x: x[1], reverse=True)
             top = response_types[0]
-            
-            # Update conversation state
-            state['last_user'] = user_id
-            if top[0] == "search":
-                state['question_count'] += 1
-            
             if random.random() < (top[1] / 100):
                 return True, top[0]
         
         return False, None
     
-    def is_chat_quiet(self, chat_id, minutes=15):
+    def is_chat_quiet(self, chat_id, minutes=20):
         """Check if chat quiet"""
         chat_id_str = str(chat_id)
         if chat_id_str not in self.last_activity:
             return True
         return datetime.now() - self.last_activity[chat_id_str] > timedelta(minutes=minutes)
     
-    async def generate_response(self, message, response_type, user_id=None, chat_id=None):
-        """Enhanced response generation with Grok integration"""
+    def generate_response(self, message, response_type):
+        """Generate Eva's response"""
         clean_msg = re.sub(r'@[^\s]*', '', message.lower()).strip()
         clean_msg = re.sub(r'(hey|hello|hi)\s+(eva|bot|namibia)', '', clean_msg).strip()
         
-        # Get conversation context for Grok
-        context = ""
-        if chat_id and user_id:
-            context = self.memory.get_context(chat_id, user_id, limit=3)
-        
-        # Search knowledge base first
-        if response_type in ["search", "conversation"] and clean_msg:
+        # Search knowledge base
+        if response_type == "search" and clean_msg:
             results = self.kb.search(clean_msg, limit=3)
             
             if results:
-                # Use Grok to enhance the response if available
-                if self.grok.enabled:
-                    knowledge_context = "\n".join([f"{r['topic']}: {r['content']}" for r in results])
-                    grok_prompt = f"""Based on this Namibia knowledge:
-                    {knowledge_context}
-                    
-                    The user asked: {message}
-                    
-                    Provide a helpful, conversational response that uses this information naturally."""
-                    
-                    try:
-                        async with self.grok:
-                            grok_response = await self.grok.get_response(grok_prompt, context)
-                            if grok_response:
-                                return grok_response
-                    except Exception as e:
-                        logger.error(f"Grok error: {e}")
-                
-                # Fallback to standard response
                 best = results[0]
                 
                 response = f"🤔 *Based on your question:*\n\n"
                 response += f"**{best['topic']}**\n"
                 response += f"{best['content']}\n\n"
                 
+                # Add related topics
                 if len(results) > 1:
                     response += "💡 *Related information:*\n"
                     for r in results[1:]:
@@ -372,21 +144,17 @@ class EvaGeisesBot:
                 
                 response += f"📱 *Use /menu for more topics or ask another question!*"
                 return response
-        
-        # Use Grok for natural conversation
-        if self.grok.enabled and response_type in ["conversation", "group_info"]:
-            system_prompt = """You are Eva Geises, managing a Namibia enthusiast group chat.
-            Be friendly, helpful, and maintain positive group dynamics.
-            Encourage discussions about Namibia.
-            Keep responses concise and engaging."""
-            
-            try:
-                async with self.grok:
-                    grok_response = await self.grok.get_response(message, context, system_prompt)
-                    if grok_response:
-                        return grok_response
-            except Exception as e:
-                logger.error(f"Grok error: {e}")
+            else:
+                return (
+                    "🤔 I searched but couldn't find specific information about that.\n\n"
+                    "Try asking about:\n"
+                    "• Etosha National Park\n"
+                    "• Sossusvlei dunes\n"
+                    "• Himba or Herero people\n"
+                    "• Windhoek capital\n"
+                    "• Wildlife and safaris\n\n"
+                    "📱 Or use /menu to browse all topics!"
+                )
         
         # Greeting responses
         greeting = self.get_greeting()
@@ -396,18 +164,13 @@ class EvaGeisesBot:
                 f"👋 {greeting}! How can I help you explore Namibia today?\n\n📱 Use /menu to browse topics!",
                 f"🇳🇦 {greeting}! What would you like to know about Namibia?\n\n💡 Try /menu for categories!",
                 f"🦁 {greeting}! I'm Eva, your Namibia guide. Ask away!\n\n📚 Check /menu for all topics!",
-                f"🏜️ {greeting}! Ready to discover Namibia?\n\n✨ Use /menu to explore!",
-                f"🌅 {greeting}! Beautiful day to talk about Namibia, isn't it? 😊"
+                f"🏜️ {greeting}! Ready to discover Namibia?\n\n✨ Use /menu to explore!"
             ]
             return random.choice(greetings)
         
         # Conversation starter
         if response_type == "conversation_starter":
             return self.get_conversation_starter()
-        
-        # Group info
-        if response_type == "group_info":
-            return self.get_group_info()
         
         return "🇳🇦 Ask me anything about Namibia!\n\n💡 Try: \"Where is Namibia?\" or use /menu"
     
@@ -419,47 +182,23 @@ class EvaGeisesBot:
             "🏜️ *Fun fact:* The Namib Desert is 55-80 million years old!\n\n📚 Use /menu for more Namibia facts!",
             "👥 *Cultural question:* What interests you about Namibia's people?\n\n💡 Try /menu → Culture!",
             "🗺️ *Travel tip:* Best time to visit is May-October!\n\n✈️ Use /menu → Tourism for planning!",
-            "🌅 *Amazing:* Sossusvlei has the world's highest dunes!\n\n📖 Discover more with /menu!",
-            "🎯 *Discussion:* What's the most surprising thing you've learned about Namibia?",
-            "🤔 *Curious:* Has anyone here visited Namibia? Share your experience!"
+            "🌅 *Amazing:* Sossusvlei has the world's highest dunes!\n\n📖 Discover more with /menu!"
         ]
         return random.choice(starters)
     
-    def get_group_info(self):
-        """Provide group information"""
-        info = [
-            "👥 *About This Group:* We're a community of Namibia enthusiasts!\n\n"
-            "🇳🇦 *Purpose:* Share knowledge, experiences, and love for Namibia\n"
-            "🤝 *Rules:* Be respectful, helpful, and stay on topic\n"
-            "🦁 *Topics:* Tourism, wildlife, culture, history, travel tips\n"
-            "💡 *Use me:* Ask questions, use /menu, mention Namibia!\n\n"
-            "Welcome to our Namibia family! 🏜️",
-            
-            "🌟 *Group Guidelines:*\n\n"
-            "1. Respect all members\n"
-            "2. Keep discussions Namibia-related\n"
-            "3. Share photos and experiences\n"
-            "4. Ask questions freely\n"
-            "5. Help each other plan trips\n\n"
-            "I'm Eva, here to assist! Use /menu or ask me anything! 🇳🇦",
-            
-            "🗺️ *Welcome to Namibia Explorers!*\n\n"
-            "This group is for:\n"
-            "• Planning Namibia trips\n"
-            "• Sharing travel stories\n"
-            "• Learning about culture\n"
-            "• Wildlife discussions\n"
-            "• Photo sharing\n\n"
-            "I'm your AI guide Eva! Try /help for commands! 🦁"
+    def generate_welcome(self, name):
+        """Welcome new members"""
+        greeting = self.get_greeting()
+        welcomes = [
+            f"👋 {greeting} {name}! I'm Eva Geises, your AI Namibia expert.\n\n💡 Ask me anything or use /menu to explore! 🇳🇦",
+            f"🌟 Welcome {name}! I'm Eva, here to help with all things Namibia!\n\n📱 Try /menu or ask me questions! 🦁",
+            f"🇳🇦 {greeting} {name}! Ready to explore Namibia together?\n\n✨ Use /menu to get started! 🏜️",
+            f"🦓 {greeting} {name}! I'm Eva, your Namibia guide!\n\n📚 Check out /menu or ask away! 🌅"
         ]
-        return random.choice(info)
-    
-    def generate_welcome(self, name, member_count):
-        """Welcome new members with group manager"""
-        return self.group_manager.get_member_welcome(name, member_count)
+        return random.choice(welcomes)
 
 # =========================================================
-# ENHANCED INTERACTIVE MENU SYSTEM
+# INTERACTIVE MENU SYSTEM
 # =========================================================
 class InteractiveMenu:
     def __init__(self, kb):
@@ -476,7 +215,6 @@ class InteractiveMenu:
             [InlineKeyboardButton("🦁 Wildlife & Nature", callback_data="cat_Wildlife")],
             [InlineKeyboardButton("🚀 Quick Facts", callback_data="cat_Facts")],
             [InlineKeyboardButton("🗺️ Geography", callback_data="cat_Geography")],
-            [InlineKeyboardButton("💬 Chat with Eva", callback_data="chat_mode")]
         ]
         return InlineKeyboardMarkup(keyboard)
     
@@ -500,10 +238,9 @@ class InteractiveMenu:
                     )
                 ])
         
-        # Add back button and chat option
+        # Add back button
         keyboard.append([
-            InlineKeyboardButton("💬 Chat Mode", callback_data="chat_mode"),
-            InlineKeyboardButton("🏠 Main Menu", callback_data="menu_back")
+            InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="menu_back")
         ])
         
         return InlineKeyboardMarkup(keyboard)
@@ -513,25 +250,51 @@ class InteractiveMenu:
         if category:
             keyboard = [
                 [InlineKeyboardButton("⬅️ Back to Category", callback_data=f"cat_{category}")],
-                [InlineKeyboardButton("💬 Chat Mode", callback_data="chat_mode"),
-                 InlineKeyboardButton("🏠 Main Menu", callback_data="menu_back")]
+                [InlineKeyboardButton("🏠 Main Menu", callback_data="menu_back")]
             ]
         else:
-            keyboard = [
-                [InlineKeyboardButton("💬 Chat Mode", callback_data="chat_mode"),
-                 InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_back")]
-            ]
+            keyboard = [[InlineKeyboardButton("⬅️ Back to Menu", callback_data="menu_back")]]
         
         return InlineKeyboardMarkup(keyboard)
+    
+    def format_category(self, category):
+        """Format category overview"""
+        topics = self.kb.get_by_category(category)
+        
+        emoji_map = {
+            "Tourism": "🏞️", "History": "📜", "Culture": "👥",
+            "Practical": "ℹ️", "Wildlife": "🦁", "Facts": "🚀",
+            "Geography": "🗺️"
+        }
+        
+        emoji = emoji_map.get(category, "📚")
+        content = f"{emoji} *{category}*\n\n"
+        
+        if topics:
+            content += f"*{len(topics)} topics available*\n\n"
+            content += "*Quick Preview:*\n"
+            
+            # Show first 3 topics as preview
+            for i, topic in enumerate(topics[:3], 1):
+                content += f"{i}. {topic['topic']}\n"
+            
+            if len(topics) > 3:
+                content += f"\n_...and {len(topics) - 3} more topics_\n"
+            
+            content += "\n💡 *Select a topic below to learn more!*"
+        else:
+            content += "No topics available in this category yet."
+        
+        return content
 
 # =========================================================
-# INITIALIZE ENHANCED BOT
+# INITIALIZE
 # =========================================================
 eva = EvaGeisesBot()
 menu = InteractiveMenu(eva.kb)
 
 # =========================================================
-# ENHANCED COMMAND HANDLERS
+# COMMAND HANDLERS
 # =========================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start"""
@@ -541,20 +304,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     greeting = eva.get_greeting()
     
     if update.message.chat.type in ['group', 'supergroup']:
-        # Initialize group management
-        chat_id = update.effective_chat.id
-        await eva.group_manager.schedule_daily_greeting(context, chat_id)
-        
-        welcome = f"""🇳🇦 *Eva Geises - Intelligent Namibia Expert Bot*
+        welcome = f"""🇳🇦 *Eva Geises - Namibia Expert Bot*
 
 {greeting} everyone! I'm Eva Geises, your AI-powered Namibia assistant! 🦁
-
-*Enhanced Features:*
-• 🤖 AI-Powered natural conversations
-• 🗣️ Context-aware discussions
-• 👥 Smart group management
-• 🌅 Daily greetings & engagement
-• 🎯 Personalized responses
 
 *I can help with:*
 • Tourism & Travel Planning 🏞️
@@ -564,54 +316,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Geography & Quick Facts 🗺️
 
 *How to use me:*
-• Ask questions naturally - I understand context!
-• Mention "Namibia" - I'll join intelligently!
+• Ask questions naturally - I understand!
+• Mention "Namibia" - I'll join in!
 • Use /menu for organized topics
-• I welcome new members personally!
-• I manage group conversations!
+• I respond to greetings warmly!
+• I welcome new members automatically!
 
 *Try asking:*
-• "Where should I stay in Windhoek?"
-• "Tell me about Etosha safaris"
-• "What's special about Himba culture?"
-• "Planning a 7-day Namibia trip"
+• "Where is Namibia?"
+• "Tell me about Etosha"
+• "What's special about Himba?"
+• "Best time to visit?"
 
 *Quick Commands:*
 /menu - Browse categories 📚
 /topics - List all topics 📋
 /stats - Your statistics 📊
 /help - Help info 🆘
-/chat - Direct conversation mode 💬
 
-🇳🇦 Let's explore Namibia together intelligently! 🏜️"""
+🇳🇦 Let's explore Namibia together! 🏜️"""
         
         await update.message.reply_text(welcome, parse_mode="Markdown")
     else:
         await update.message.reply_text(
             f"👋 {greeting} {user.first_name}!\n\n"
-            f"I'm Eva Geises, your enhanced Namibia expert! 🇳🇦\n\n"
-            f"*New Features:*\n"
-            f"• AI-powered conversations\n"
-            f"• Context understanding\n"
-            f"• Natural language processing\n\n"
+            f"I'm Eva Geises, your Namibia expert! 🇳🇦\n\n"
             f"Add me to a group or ask me anything!\n\n"
-            f"📱 Use /menu to explore topics or /chat for conversation! 🦁",
+            f"📱 Use /menu to explore topics! 🦁",
             parse_mode="Markdown"
         )
-
-async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /chat - Direct conversation mode"""
-    await update.message.reply_text(
-        "💬 *Chat Mode Activated*\n\n"
-        "I'm now in conversational mode! Talk to me naturally about anything Namibia-related.\n\n"
-        "*Tips:*\n"
-        "• Ask follow-up questions\n"
-        "• Share your thoughts\n"
-        "• I'll remember our conversation\n"
-        "• Use /menu to return to topics\n\n"
-        "What's on your mind about Namibia? 🇳🇦",
-        parse_mode="Markdown"
-    )
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /menu"""
@@ -631,9 +364,8 @@ async def topics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += f"{i}. {topic}\n"
         
         response += f"\n*Total: {len(topics)} topics*\n\n"
-        response += "💡 Ask me about any topic naturally!\n"
-        response += "📱 Or use /menu for organized categories\n"
-        response += "💬 Try /chat for conversation mode"
+        response += "💡 Ask me about any topic!\n"
+        response += "📱 Or use /menu for organized categories"
     else:
         response = "No topics available."
     
@@ -647,24 +379,19 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_users = eva.db.get_all_users()
         popular = eva.db.get_popular_queries(5)
         
-        # Count active conversations
-        active_chats = len(eva.conversation_state)
-        
-        stats = f"""📊 *Enhanced Eva Geises Statistics (Admin)*
+        stats = f"""📊 *Eva Geises Statistics (Admin)*
 
 *System:*
 • Total users: {len(all_users)}
 • Topics: {len(eva.kb.get_all_topics())}
 • Categories: {len(eva.kb.get_categories())}
-• Active conversations: {active_chats}
-• Grok API: {'✅ Enabled' if eva.grok.enabled else '❌ Disabled'}
 
 *Popular Questions:*
 """
         for i, q in enumerate(popular, 1):
             stats += f"{i}. \"{q['query'][:30]}...\" ({q['count']}x)\n"
         
-        stats += "\n📱 Status: ✅ Intelligent Mode Active"
+        stats += "\n📱 Status: ✅ Active"
         await update.message.reply_text(stats, parse_mode="Markdown")
     else:
         user_stats = eva.db.get_user_stats(user_id)
@@ -679,12 +406,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Topics: {len(eva.kb.get_all_topics())}
 • Categories: {len(eva.kb.get_categories())}
 
-*Features:*
-• AI Conversations: {'✅' if eva.grok.enabled else '❌'}
-• Context Memory: ✅
-• Group Management: ✅
-
-📱 Use /menu to explore or /chat to talk! 🇳🇦"""
+📱 Use /menu to explore! 🇳🇦"""
         
         await update.message.reply_text(stats, parse_mode="Markdown")
 
@@ -692,16 +414,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help"""
     greeting = eva.get_greeting()
     
-    help_text = f"""🆘 *Enhanced Eva Geises - Help*
+    help_text = f"""🆘 *Eva Geises - Help*
 
-{greeting}! I'm Eva, your intelligent AI Namibia expert! 🇳🇦
-
-*Enhanced Capabilities:*
-• Natural language understanding 🤖
-• Conversation memory 🧠
-• Context-aware responses 🗣️
-• Group management 👥
-• Daily engagement 🌅
+{greeting}! I'm Eva, your AI Namibia expert! 🇳🇦
 
 *What I know:*
 • Tourism & destinations 🏞️
@@ -712,31 +427,58 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Geography & facts 🗺️
 
 *How to use me:*
-• Ask natural questions with context
+• Ask natural questions
 • Use /menu for categories
-• Try /chat for conversation mode
-• I respond intelligently to greetings!
-• I manage group dynamics!
+• I respond to greetings!
+• I join Namibia discussions!
 
 *Examples:*
-"Where should I stay in Swakopmund?"
-"Tell me about Etosha during rainy season"
-"Himba people traditions and lifestyle"
-"Planning a 10-day self-drive Namibia trip"
+"Where is Namibia?"
+"Tell me about Etosha"
+"Himba people culture"
+"Best time to visit?"
 
 *Commands:*
 /menu - Categories 📚
 /topics - All topics 📋
-/chat - Conversation mode 💬
 /stats - Statistics 📊
 /help - This message 🆘
 
-🇳🇦 I understand context - ask follow-up questions! 🦁"""
+🇳🇦 Ask me anything! 🦁"""
     
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: add knowledge"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or '|' not in ' '.join(context.args):
+        await update.message.reply_text(
+            "*Usage:* /add <topic> | <content> | <category> | <keywords>\n\n"
+            "*Example:*\n"
+            "`/add Skeleton Coast | Haunting coastline | Tourism | coast`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    try:
+        parts = ' '.join(context.args).split('|')
+        topic = parts[0].strip()
+        content = parts[1].strip()
+        category = parts[2].strip() if len(parts) > 2 else 'General'
+        keywords = parts[3].strip() if len(parts) > 3 else ''
+        
+        eva.kb.add_knowledge(topic, content, category, keywords)
+        await update.message.reply_text(f"✅ Added: *{topic}*", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enhanced group message handling"""
+    """Handle group messages"""
     if update.message.from_user.id == context.bot.id or not update.message.text:
         return
     
@@ -751,13 +493,10 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if should_respond and response_type:
         logger.info(f"Eva responding: {message[:50]}... ({response_type})")
-        response = await eva.generate_response(message, response_type, user_id, chat_id)
+        response = eva.generate_response(message, response_type)
         
         if response:
-            # Store conversation in memory
-            eva.memory.add_conversation(chat_id, user_id, message, response)
-            
-            await asyncio.sleep(random.uniform(0.3, 1.2))
+            await asyncio.sleep(random.uniform(0.5, 1.5))
             
             try:
                 await update.message.reply_text(
@@ -765,111 +504,51 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     parse_mode="Markdown",
                     reply_to_message_id=update.message.message_id
                 )
-                logger.info("✅ Intelligent response sent")
+                logger.info("✅ Response sent")
             except Exception as e:
                 logger.error(f"Error: {e}")
 
 async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enhanced private message handling with Grok"""
+    """Handle private messages"""
     if update.message.text.startswith('/'):
         return
     
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
     message = update.message.text
     
-    # Use Grok for enhanced responses in private chat
-    if eva.grok.enabled:
-        context = eva.memory.get_context(chat_id, user_id, limit=5)
-        
-        system_prompt = """You are Eva Geises in private chat mode. 
-        Provide detailed, helpful information about Namibia.
-        Be conversational and friendly.
-        Ask follow-up questions to understand user needs.
-        Use the knowledge base when relevant."""
-        
-        try:
-            async with eva.grok:
-                grok_response = await eva.grok.get_response(message, context, system_prompt)
-                if grok_response:
-                    eva.memory.add_conversation(chat_id, user_id, message, grok_response)
-                    eva.db.log_query(user_id, message)
-                    await update.message.reply_text(grok_response, parse_mode="Markdown")
-                    return
-        except Exception as e:
-            logger.error(f"Grok private chat error: {e}")
-    
-    # Fallback to knowledge base
     results = eva.kb.search(message, limit=3)
     
     if results:
         response = "🔍 *Search Results:*\n\n"
         for i, r in enumerate(results, 1):
             response += f"*{i}. {r['topic']}*\n{r['content']}\n\n"
-        response += "📱 Use /menu for organized browsing or /chat to talk naturally!"
+        response += "📱 Use /menu for organized browsing!"
     else:
         response = (
             "🤔 No specific info found.\n\n"
             "Try:\n"
             "• /menu to browse\n"
-            "• /chat for conversation mode\n"
             "• Ask about Etosha, Himba, etc.\n\n"
-            "🇳🇦 I understand natural language - ask in your own words!"
+            "🇳🇦 I know about tourism, wildlife, culture!"
         )
     
-    eva.memory.add_conversation(chat_id, user_id, message, response)
     eva.db.log_query(user_id, message)
     await update.message.reply_text(response, parse_mode="Markdown")
 
 async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enhanced new member welcome"""
+    """Welcome new members"""
     if update.message.new_chat_members:
-        chat_id = update.effective_chat.id
-        
-        # Get member count for personalized welcome
-        try:
-            chat = await context.bot.get_chat(chat_id)
-            member_count = await chat.get_member_count()
-        except:
-            member_count = 1
-        
         for member in update.message.new_chat_members:
             if member.id == context.bot.id:
                 continue
             
             if member.id not in eva.welcomed_users:
-                welcome = eva.generate_welcome(member.first_name, member_count)
+                welcome = eva.generate_welcome(member.first_name)
                 eva.db.add_user(member.id, member.username or "Unknown")
                 eva.welcomed_users.add(member.id)
                 
-                # Add group info
-                welcome += "\n\n💡 *Group Tips:*\n"
-                welcome += "• Ask me questions about Namibia\n"
-                welcome += "• Use /menu to explore topics\n"
-                welcome += "• Share your Namibia experiences\n"
-                welcome += "• Be part of our community!\n\n"
-                welcome += "🇳🇦 Welcome aboard! 🦁"
-                
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(1)
                 await update.message.reply_text(welcome, parse_mode="Markdown")
-                
-                # Send follow-up after 2 minutes
-                async def send_followup(context):
-                    try:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"👋 *Follow-up for {member.first_name}:*\n\n"
-                                 f"Need help getting started? Try:\n"
-                                 f"• \"/menu\" for Namibia topics\n"
-                                 f"• Ask about specific places\n"
-                                 f"• Share what interests you!\n\n"
-                                 f"I'm here to help! 🇳🇦",
-                            parse_mode="Markdown"
-                        )
-                    except:
-                        pass
-                
-                context.job_queue.run_once(send_followup, 120, data=chat_id)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle buttons"""
@@ -886,21 +565,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu.main_menu()
         )
     
-    # Chat mode
-    elif data == "chat_mode":
-        await query.edit_message_text(
-            "💬 *Switched to Chat Mode*\n\n"
-            "Talk to me naturally! I'll use AI to understand and respond.\n\n"
-            "*Examples:*\n"
-            "\"What's the best safari route?\"\n"
-            "\"Tell me about Namibia's culture\"\n"
-            "\"Planning a trip in July\"\n\n"
-            "What would you like to discuss? 🇳🇦",
-            parse_mode="Markdown",
-            reply_markup=menu.back_button()
-        )
-    
-    # Category selection
+    # Category selection - show submenu with topic buttons
     elif data.startswith("cat_"):
         category = data.replace("cat_", "")
         content = menu.format_category(category)
@@ -911,8 +576,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu.create_submenu(category)
         )
     
-    # Topic selection
+    # Topic selection - show detailed information
     elif data.startswith("topic_"):
+        # Parse: topic_Category_index
         parts = data.split("_")
         if len(parts) >= 3:
             category = parts[1]
@@ -926,6 +592,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if topics and 0 <= topic_index < len(topics):
                 topic = topics[topic_index]
                 
+                # Format detailed topic response
                 emoji_map = {
                     "Tourism": "🏞️", "History": "📜", "Culture": "👥",
                     "Practical": "ℹ️", "Wildlife": "🦁", "Facts": "🚀",
@@ -937,13 +604,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = f"{emoji} *{topic['topic']}*\n\n"
                 response += f"{topic['content']}\n\n"
                 
+                # Add keywords if available
                 if topic.get('keywords'):
                     keywords = topic['keywords'].strip()
                     if keywords:
                         response += f"🏷️ *Keywords:* {keywords}\n\n"
                 
                 response += f"📂 *Category:* {category}\n\n"
-                response += "💡 Want to discuss this further? Use /chat mode!"
+                response += "💡 Ask me more questions or explore other topics!"
                 
                 await query.edit_message_text(
                     response,
@@ -952,6 +620,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
         
+        # Fallback if topic not found
         await query.edit_message_text(
             "❌ Topic not found. Please try another topic.",
             parse_mode="Markdown",
@@ -959,73 +628,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # =========================================================
-# DAILY TASKS
-# =========================================================
-async def daily_tasks(context: ContextTypes.DEFAULT_TYPE):
-    """Run daily maintenance tasks"""
-    # Clear old conversation states
-    cutoff = datetime.now() - timedelta(days=1)
-    chat_keys = list(eva.conversation_state.keys())
-    
-    for key in chat_keys:
-        # Simple cleanup - in production, track timestamps
-        pass
-    
-    logger.info("Daily maintenance completed")
-
-# =========================================================
 # MAIN
 # =========================================================
 def main():
-    """Run Enhanced Eva"""
+    """Run Eva"""
     logger.info("=" * 60)
-    logger.info("🇳🇦 ENHANCED EVA GEISES - INTELLIGENT NAMIBIA EXPERT")
+    logger.info("🇳🇦 EVA GEISES - NAMIBIA EXPERT")
     logger.info("=" * 60)
     logger.info(f"✅ Topics: {len(eva.kb.get_all_topics())}")
     logger.info(f"✅ Categories: {len(eva.kb.get_categories())}")
-    logger.info(f"✅ Grok API: {'ENABLED' if eva.grok.enabled else 'DISABLED'}")
-    logger.info(f"✅ Conversation Memory: ACTIVE")
-    logger.info(f"✅ Group Management: ACTIVE")
     logger.info("=" * 60)
     
     app = Application.builder() \
         .token(TELEGRAM_BOT_TOKEN) \
-        .connect_timeout(20) \
-        .read_timeout(15) \
-        .write_timeout(15) \
+        .connect_timeout(15) \
+        .read_timeout(10) \
+        .write_timeout(10) \
         .build()
     
-    # Store Eva instance in bot data
-    app.bot_data['eva'] = eva
-    
-    # Add command handlers
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('menu', menu_command))
     app.add_handler(CommandHandler('topics', topics_command))
     app.add_handler(CommandHandler('stats', stats_command))
     app.add_handler(CommandHandler('help', help_command))
-    app.add_handler(CommandHandler('chat', chat_command))
     app.add_handler(CommandHandler('add', add_command))
-    
-    # Add callback and message handlers
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_group_message))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_private_message))
     
-    # Schedule daily tasks
-    app.job_queue.run_daily(daily_tasks, time=datetime.time(datetime.now().replace(hour=3, minute=0, second=0)))
-    
-    logger.info("🚀 Enhanced Eva is running intelligently...")
+    logger.info("🚀 Eva is running...")
     
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
-            app.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                close_loop=False
-            )
+            app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
             break
         except (TimedOut, NetworkError) as e:
             logger.error(f"Connection error (attempt {attempt + 1}): {e}")
@@ -1034,7 +671,7 @@ def main():
             else:
                 raise
         except KeyboardInterrupt:
-            logger.info("🛑 Intelligently stopped")
+            logger.info("🛑 Stopped")
             break
         except Exception as e:
             logger.error(f"Error: {e}")
