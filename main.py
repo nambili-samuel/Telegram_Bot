@@ -525,7 +525,7 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
         response += "📱 Use /menu for organized browsing!"
     else:
         response = (
-            "🤔 No specific info found.\n\n"
+            "🤔 Ask me about Namibia.\n\n"
             "Try:\n"
             "• /menu to browse\n"
             "• Ask about Etosha, Himba, etc.\n\n"
