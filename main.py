@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Eva Geises - Intelligent Namibia Bot with Smart Features
+Complete version with spam detection, time-based greetings, and varied welcomes
+"""
+
 import os
 import logging
 import random
@@ -17,6 +23,7 @@ from telegram.ext import (
 )
 from database import Database
 from knowledge_base import KnowledgeBase
+from smart_features import SmartFeatures
 
 # Configure logging
 logging.basicConfig(
@@ -45,6 +52,7 @@ class EvaGeisesBot:
         self.kb = KnowledgeBase()
         self.last_activity = {}
         self.welcomed_users = set()
+        self.smart = SmartFeatures()  # Smart features
         logger.info(f"🇳🇦 Eva Geises initialized with {len(self.kb.get_all_topics())} topics")
     
     def get_greeting(self):
@@ -175,27 +183,23 @@ class EvaGeisesBot:
         return "🇳🇦 Ask me anything about Namibia!\n\n💡 Try: \"Where is Namibia?\" or use /menu"
     
     def get_conversation_starter(self):
-        """Generate conversation starter"""
-        starters = [
-            "💭 *Question for everyone:* What's your dream Namibia destination?\n\n📱 Use /menu to explore destinations!",
-            "🦁 *Wildlife talk:* Who has been on safari in Namibia?\n\n🦓 Check /menu → Wildlife for more!",
-            "🏜️ *Fun fact:* The Namib Desert is 55-80 million years old!\n\n📚 Use /menu for more Namibia facts!",
-            "👥 *Cultural question:* What interests you about Namibia's people?\n\n💡 Try /menu → Culture!",
-            "🗺️ *Travel tip:* Best time to visit is May-October!\n\n✈️ Use /menu → Tourism for planning!",
-            "🌅 *Amazing:* Sossusvlei has the world's highest dunes!\n\n📖 Discover more with /menu!"
-        ]
-        return random.choice(starters)
+        """Generate conversation starter or engagement prompt"""
+        if random.random() < 0.5:
+            return self.smart.get_engagement_prompt()
+        else:
+            starters = [
+                "💭 *Question for everyone:* What's your dream Namibia destination?\n\n📱 Use /menu to explore destinations!",
+                "🦁 *Wildlife talk:* Who has been on safari in Namibia?\n\n🦓 Check /menu → Wildlife for more!",
+                "🏜️ *Fun fact:* The Namib Desert is 55-80 million years old!\n\n📚 Use /menu for more Namibia facts!",
+                "👥 *Cultural question:* What interests you about Namibia's people?\n\n💡 Try /menu → Culture!",
+                "🗺️ *Travel tip:* Best time to visit is May-October!\n\n✈️ Use /menu → Tourism for planning!",
+                "🌅 *Amazing:* Sossusvlei has the world's highest dunes!\n\n📖 Discover more with /menu!"
+            ]
+            return random.choice(starters)
     
     def generate_welcome(self, name):
-        """Welcome new members"""
-        greeting = self.get_greeting()
-        welcomes = [
-            f"👋 {greeting} {name}! I'm Eva Geises, your AI Namibia expert.\n\n💡 Ask me anything or use /menu to explore! 🇳🇦",
-            f"🌟 Welcome {name}! I'm Eva, here to help with all things Namibia!\n\n📱 Try /menu or ask me questions! 🦁",
-            f"🇳🇦 {greeting} {name}! Ready to explore Namibia together?\n\n✨ Use /menu to get started! 🏜️",
-            f"🦓 {greeting} {name}! I'm Eva, your Namibia guide!\n\n📚 Check out /menu or ask away! 🌅"
-        ]
-        return random.choice(welcomes)
+        """Welcome new members with varied messages"""
+        return self.smart.get_varied_welcome(name)
 
 # =========================================================
 # INTERACTIVE MENU SYSTEM
@@ -224,10 +228,8 @@ class InteractiveMenu:
         keyboard = []
         
         if topics:
-            # Add each topic as a clickable button
             for i, topic in enumerate(topics):
                 topic_name = topic['topic']
-                # Truncate long names but keep them readable
                 if len(topic_name) > 35:
                     topic_name = topic_name[:32] + "..."
                 
@@ -238,7 +240,6 @@ class InteractiveMenu:
                     )
                 ])
         
-        # Add back button
         keyboard.append([
             InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="menu_back")
         ])
@@ -274,7 +275,6 @@ class InteractiveMenu:
             content += f"*{len(topics)} topics available*\n\n"
             content += "*Quick Preview:*\n"
             
-            # Show first 3 topics as preview
             for i, topic in enumerate(topics[:3], 1):
                 content += f"{i}. {topic['topic']}\n"
             
@@ -478,17 +478,34 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle group messages"""
+    """Handle group messages with smart features"""
     if update.message.from_user.id == context.bot.id or not update.message.text:
         return
     
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     message = update.message.text
+    username = update.effective_user.first_name
     
     eva.db.add_user(user_id, update.effective_user.username or "Unknown")
     eva.db.log_query(user_id, message)
     
+    # Check for spam
+    is_spam, warning_level = eva.smart.check_spam(user_id, chat_id)
+    
+    if is_spam:
+        warning_msg = eva.smart.get_spam_warning(warning_level, username)
+        await update.message.reply_text(warning_msg)
+        return
+    
+    # Time-based greeting (every 2 hours)
+    if eva.smart.should_greet_chat(chat_id, hours=2):
+        if random.random() < 0.3:  # 30% chance when it's time
+            greeting = eva.smart.get_time_based_greeting()
+            await asyncio.sleep(1)
+            await update.message.reply_text(greeting, parse_mode="Markdown")
+    
+    # Normal message handling
     should_respond, response_type = eva.analyze_message(message, user_id, chat_id)
     
     if should_respond and response_type:
@@ -557,7 +574,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    # Main menu
     if data == "menu_back":
         await query.edit_message_text(
             "🇳🇦 *Namibia Knowledge System*\n\nWhat would you like to explore?",
@@ -565,7 +581,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu.main_menu()
         )
     
-    # Category selection - show submenu with topic buttons
     elif data.startswith("cat_"):
         category = data.replace("cat_", "")
         content = menu.format_category(category)
@@ -576,9 +591,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=menu.create_submenu(category)
         )
     
-    # Topic selection - show detailed information
     elif data.startswith("topic_"):
-        # Parse: topic_Category_index
         parts = data.split("_")
         if len(parts) >= 3:
             category = parts[1]
@@ -592,7 +605,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if topics and 0 <= topic_index < len(topics):
                 topic = topics[topic_index]
                 
-                # Format detailed topic response
                 emoji_map = {
                     "Tourism": "🏞️", "History": "📜", "Culture": "👥",
                     "Practical": "ℹ️", "Wildlife": "🦁", "Facts": "🚀",
@@ -604,7 +616,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = f"{emoji} *{topic['topic']}*\n\n"
                 response += f"{topic['content']}\n\n"
                 
-                # Add keywords if available
                 if topic.get('keywords'):
                     keywords = topic['keywords'].strip()
                     if keywords:
@@ -620,7 +631,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
         
-        # Fallback if topic not found
         await query.edit_message_text(
             "❌ Topic not found. Please try another topic.",
             parse_mode="Markdown",
@@ -633,10 +643,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     """Run Eva"""
     logger.info("=" * 60)
-    logger.info("🇳🇦 EVA GEISES - NAMIBIA EXPERT")
+    logger.info("🇳🇦 EVA GEISES - SMART NAMIBIA EXPERT")
     logger.info("=" * 60)
     logger.info(f"✅ Topics: {len(eva.kb.get_all_topics())}")
     logger.info(f"✅ Categories: {len(eva.kb.get_categories())}")
+    logger.info(f"✅ Smart Features: Enabled")
     logger.info("=" * 60)
     
     app = Application.builder() \
