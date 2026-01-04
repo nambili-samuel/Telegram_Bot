@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class KnowledgeBase:
     def __init__(self):
         self.db_path = os.getenv('DATABASE_PATH', 'bot_data.db')
-        self.csv_url = 'https://gist.githubusercontent.com/nambili-samuel/a3bf79d67b2bd0c8d5aa9a830024417d/raw/45e1328bc8c97039f263ae34268cde5126102eb0/namibia_knowledge_base.csv'
+        self.csv_url = 'https://gist.githubusercontent.com/nambili-samuel/a3bf79d67b2bd0c8d5aa9a830024417d/raw/a3ae222c47a8cce201da8f18d5cdf0be44fa0df7/namibia_knowledge_base.csv'
         self.last_sync = 0
         self.sync_interval = 10 * 60 * 1000  # 10 minutes in milliseconds
         
