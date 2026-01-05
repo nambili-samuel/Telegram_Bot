@@ -1,11 +1,14 @@
 import os
 import sqlite3
 import re
-import time
 import requests
 import csv
-from io import StringIO
+import time
+import io
 from contextlib import contextmanager
+import logging
+
+logger = logging.getLogger(__name__)
 
 class KnowledgeBase:
     def __init__(self):
@@ -13,9 +16,16 @@ class KnowledgeBase:
         self.csv_url = 'https://gist.githubusercontent.com/nambili-samuel/a3bf79d67b2bd0c8d5aa9a830024417d/raw/36f6f55b9997c60ff825ddc806cee8dfd76916d7/namibia_knowledge_base.csv'
         self.last_sync = 0
         self.sync_interval = 10 * 60 * 1000  # 10 minutes in milliseconds
+        
         self.init_knowledge_base()
         self.seed_namibia_data()
-        self.sync_from_gist()
+        
+        # Sync with CSV after seeding local data
+        try:
+            logger.info("🔄 Attempting initial CSV sync...")
+            self.sync_with_csv()
+        except Exception as e:
+            logger.error(f"❌ Initial CSV sync failed: {e}")
     
     @contextmanager
     def get_connection(self):
@@ -45,7 +55,8 @@ class KnowledgeBase:
                     keywords TEXT,
                     source TEXT DEFAULT 'local',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(topic, category)
                 )
             ''')
             
@@ -61,25 +72,20 @@ class KnowledgeBase:
                 ON knowledge(category)
             ''')
             
-            # Create sync tracking table
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS sync_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sync_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    records_added INTEGER DEFAULT 0,
-                    records_updated INTEGER DEFAULT 0,
-                    status TEXT,
-                    message TEXT
-                )
+                CREATE INDEX IF NOT EXISTS idx_knowledge_source 
+                ON knowledge(source)
             ''')
+            
+            logger.info("✅ Database initialized")
     
     def seed_namibia_data(self):
         """Seed Namibia knowledge base including real estate"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Check if data exists
-            cursor.execute('SELECT COUNT(*) as count FROM knowledge')
+            # Check if local data exists
+            cursor.execute("SELECT COUNT(*) as count FROM knowledge WHERE source = 'local'")
             if cursor.fetchone()['count'] > 0:
                 return
             
@@ -139,143 +145,227 @@ class KnowledgeBase:
             
             for category, topic, content, keywords in namibia_data:
                 cursor.execute('''
-                    INSERT INTO knowledge (category, topic, content, keywords, source)
+                    INSERT OR IGNORE INTO knowledge (category, topic, content, keywords, source)
                     VALUES (?, ?, ?, ?, 'local')
                 ''', (category, topic, content, keywords))
                 
-                knowledge_id = cursor.lastrowid
-                
-                cursor.execute('''
-                    INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (knowledge_id, category, topic, content, keywords))
+                if cursor.rowcount > 0:
+                    knowledge_id = cursor.lastrowid
+                    
+                    cursor.execute('''
+                        INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (knowledge_id, category, topic, content, keywords))
+            
+            logger.info(f"✅ Seeded {len(namibia_data)} local topics including real estate")
     
-    def sync_from_gist(self, force=False):
-        """Sync knowledge base from GitHub Gist CSV"""
-        current_time = int(time.time() * 1000)
-        
-        # Check if sync is needed
-        if not force and (current_time - self.last_sync) < self.sync_interval:
-            return {'status': 'skipped', 'message': 'Sync interval not reached'}
-        
+    def sync_with_csv(self):
+        """Sync database with CSV file from GitHub Gist"""
         try:
-            # Fetch CSV from Gist
-            response = requests.get(self.csv_url, timeout=10)
+            current_time = time.time() * 1000
+            
+            # Check if we need to sync
+            if self.has_data() and (current_time - self.last_sync < self.sync_interval):
+                logger.debug("📚 Using cached knowledge base")
+                return True
+            
+            logger.info(f"📥 Fetching knowledge base from: {self.csv_url}")
+            
+            # Fetch CSV from URL with timeout
+            response = requests.get(self.csv_url, timeout=30)
             response.raise_for_status()
             
-            # Parse CSV
-            csv_data = StringIO(response.text)
-            reader = csv.DictReader(csv_data)
+            # Parse CSV content
+            csv_text = response.text
+            logger.debug(f"📄 CSV size: {len(csv_text)} characters")
             
-            records_added = 0
-            records_updated = 0
+            csv_data = []
+            csv_file = io.StringIO(csv_text)
             
+            try:
+                reader = csv.DictReader(csv_file)
+                logger.info(f"📋 CSV headers detected: {reader.fieldnames}")
+                
+                for row_num, row in enumerate(reader, 1):
+                    try:
+                        # Map CSV columns to database structure
+                        # CSV has: Question, Answer, Category, Keyword
+                        # We need: topic, content, category, keywords
+                        
+                        topic = ''
+                        content = ''
+                        category = 'General'
+                        keywords = ''
+                        
+                        # Try different possible column names
+                        if 'Question' in row:
+                            topic = row['Question'].strip()
+                        elif 'question' in row:
+                            topic = row['question'].strip()
+                        elif 'topic' in row:
+                            topic = row['topic'].strip()
+                        elif 'Topic' in row:
+                            topic = row['Topic'].strip()
+                        
+                        if 'Answer' in row:
+                            content = row['Answer'].strip()
+                        elif 'answer' in row:
+                            content = row['answer'].strip()
+                        elif 'content' in row:
+                            content = row['content'].strip()
+                        elif 'Content' in row:
+                            content = row['Content'].strip()
+                        
+                        if 'Category' in row:
+                            category = row['Category'].strip()
+                        elif 'category' in row:
+                            category = row['category'].strip()
+                        
+                        if 'Keyword' in row:
+                            keywords = row['Keyword'].strip()
+                        elif 'keyword' in row:
+                            keywords = row['keyword'].strip()
+                        elif 'Keywords' in row:
+                            keywords = row['Keywords'].strip()
+                        elif 'keywords' in row:
+                            keywords = row['keywords'].strip()
+                        
+                        # Clean and validate
+                        if not topic:
+                            topic = f"Topic_{row_num}"
+                        if not content:
+                            content = "No content available"
+                        if not category:
+                            category = "General"
+                        
+                        # Remove quotes and clean up
+                        topic = topic.replace('"', '').replace("'", "").strip()
+                        content = content.replace('"', '').replace("'", "").strip()
+                        category = category.replace('"', '').replace("'", "").strip()
+                        keywords = keywords.replace('"', '').replace("'", "").strip()
+                        
+                        csv_data.append({
+                            'topic': topic,
+                            'content': content,
+                            'category': category,
+                            'keywords': keywords
+                        })
+                        
+                        if row_num <= 3:  # Log first few rows
+                            logger.debug(f"📝 Row {row_num}: {topic[:50]}... -> {category}")
+                            
+                    except Exception as row_error:
+                        logger.warning(f"⚠️ Error parsing row {row_num}: {row_error}")
+                        continue
+                        
+            except csv.Error as csv_error:
+                logger.error(f"❌ CSV parsing error: {csv_error}")
+                return False
+            
+            if not csv_data:
+                logger.warning("⚠️ No data parsed from CSV")
+                return False
+            
+            # Insert/update data in database
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                for row in reader:
-                    category = row.get('category', 'General').strip()
-                    topic = row.get('topic', '').strip()
-                    content = row.get('content', '').strip()
-                    keywords = row.get('keywords', '').strip()
-                    
-                    if not topic or not content:
-                        continue
-                    
-                    # Check if entry exists
-                    cursor.execute('''
-                        SELECT id FROM knowledge 
-                        WHERE topic = ? AND source = 'gist'
-                    ''', (topic,))
-                    
-                    existing = cursor.fetchone()
-                    
-                    if existing:
-                        # Update existing entry
-                        cursor.execute('''
-                            UPDATE knowledge 
-                            SET category = ?, content = ?, keywords = ?, 
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        ''', (category, content, keywords, existing['id']))
-                        
-                        # Update FTS
-                        cursor.execute('''
-                            UPDATE knowledge_fts 
-                            SET category = ?, topic = ?, content = ?, keywords = ?
-                            WHERE rowid = ?
-                        ''', (category, topic, content, keywords, existing['id']))
-                        
-                        records_updated += 1
-                    else:
-                        # Insert new entry
-                        cursor.execute('''
-                            INSERT INTO knowledge (category, topic, content, keywords, source)
-                            VALUES (?, ?, ?, ?, 'gist')
-                        ''', (category, topic, content, keywords))
-                        
-                        knowledge_id = cursor.lastrowid
-                        
-                        cursor.execute('''
-                            INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
-                            VALUES (?, ?, ?, ?, ?)
-                        ''', (knowledge_id, category, topic, content, keywords))
-                        
-                        records_added += 1
+                added = 0
+                updated = 0
                 
-                # Log sync
-                cursor.execute('''
-                    INSERT INTO sync_log (records_added, records_updated, status, message)
-                    VALUES (?, ?, 'success', 'Sync completed successfully')
-                ''', (records_added, records_updated))
+                for entry in csv_data:
+                    try:
+                        # Check if entry exists
+                        cursor.execute('''
+                            SELECT id FROM knowledge 
+                            WHERE topic = ? AND category = ?
+                        ''', (entry['topic'], entry['category']))
+                        
+                        existing = cursor.fetchone()
+                        
+                        if existing:
+                            # Update existing entry
+                            cursor.execute('''
+                                UPDATE knowledge 
+                                SET content = ?, keywords = ?, 
+                                    updated_at = CURRENT_TIMESTAMP,
+                                    source = 'csv'
+                                WHERE id = ?
+                            ''', (entry['content'], entry['keywords'], existing['id']))
+                            
+                            # Update FTS
+                            cursor.execute('''
+                                DELETE FROM knowledge_fts WHERE rowid = ?
+                            ''', (existing['id'],))
+                            
+                            cursor.execute('''
+                                INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                                VALUES (?, ?, ?, ?, ?)
+                            ''', (existing['id'], entry['category'], entry['topic'], 
+                                  entry['content'], entry['keywords']))
+                            
+                            updated += 1
+                        else:
+                            # Insert new entry
+                            cursor.execute('''
+                                INSERT INTO knowledge (category, topic, content, keywords, source)
+                                VALUES (?, ?, ?, ?, 'csv')
+                            ''', (entry['category'], entry['topic'], entry['content'], entry['keywords']))
+                            
+                            knowledge_id = cursor.lastrowid
+                            
+                            cursor.execute('''
+                                INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                                VALUES (?, ?, ?, ?, ?)
+                            ''', (knowledge_id, entry['category'], entry['topic'], 
+                                  entry['content'], entry['keywords']))
+                            
+                            added += 1
+                            
+                    except Exception as insert_error:
+                        logger.error(f"❌ Error inserting {entry['topic']}: {insert_error}")
+                        continue
+                
+                logger.info(f"✅ CSV sync complete: {added} added, {updated} updated")
             
             self.last_sync = current_time
-            
-            return {
-                'status': 'success',
-                'records_added': records_added,
-                'records_updated': records_updated,
-                'message': f'Synced {records_added} new and {records_updated} updated records'
-            }
+            return True
             
         except requests.RequestException as e:
-            error_msg = f'Failed to fetch CSV: {str(e)}'
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO sync_log (status, message)
-                    VALUES ('error', ?)
-                ''', (error_msg,))
-            
-            return {'status': 'error', 'message': error_msg}
-        
+            logger.error(f"❌ Failed to fetch CSV: {e}")
+            return False
         except Exception as e:
-            error_msg = f'Sync error: {str(e)}'
+            logger.error(f"❌ CSV sync error: {e}")
+            return False
+    
+    def has_data(self):
+        """Check if database has any data"""
+        try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO sync_log (status, message)
-                    VALUES ('error', ?)
-                ''', (error_msg,))
-            
-            return {'status': 'error', 'message': error_msg}
+                cursor.execute('SELECT COUNT(*) as count FROM knowledge')
+                return cursor.fetchone()['count'] > 0
+        except:
+            return False
     
-    def get_sync_status(self):
-        """Get last sync status"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM sync_log 
-                ORDER BY sync_timestamp DESC 
-                LIMIT 1
-            ''')
-            result = cursor.fetchone()
-            return dict(result) if result else None
+    def ensure_data(self):
+        """Ensure we have data, sync if needed"""
+        if not self.has_data():
+            logger.warning("⚠️ No data in database, attempting sync...")
+            self.sync_with_csv()
     
     def search(self, query, limit=5):
         """Search the knowledge base"""
-        # Auto-sync if needed
-        self.sync_from_gist()
+        # Ensure we have data and auto-sync if needed
+        self.ensure_data()
+        
+        try:
+            # Try to sync in background (non-blocking)
+            current_time = time.time() * 1000
+            if (current_time - self.last_sync) >= self.sync_interval:
+                self.sync_with_csv()
+        except:
+            pass  # Don't block search if sync fails
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -322,19 +412,21 @@ class KnowledgeBase:
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT INTO knowledge (category, topic, content, keywords, source)
-                VALUES (?, ?, ?, ?, 'user')
+                INSERT OR REPLACE INTO knowledge (category, topic, content, keywords, source)
+                VALUES (?, ?, ?, ?, 'manual')
             ''', (category, topic, content, keywords))
             
             knowledge_id = cursor.lastrowid
             
             cursor.execute('''
-                INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                INSERT OR REPLACE INTO knowledge_fts (rowid, category, topic, content, keywords)
                 VALUES (?, ?, ?, ?, ?)
             ''', (knowledge_id, category, topic, content, keywords))
     
     def get_all_topics(self):
         """Get all available topics"""
+        self.ensure_data()
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT DISTINCT topic FROM knowledge ORDER BY topic')
@@ -342,6 +434,8 @@ class KnowledgeBase:
     
     def get_by_category(self, category):
         """Get all topics in a category"""
+        self.ensure_data()
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -354,6 +448,8 @@ class KnowledgeBase:
     
     def get_categories(self):
         """Get all categories"""
+        self.ensure_data()
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT DISTINCT category FROM knowledge ORDER BY category')
