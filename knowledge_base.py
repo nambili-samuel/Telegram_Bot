@@ -1,28 +1,13 @@
 import os
 import sqlite3
 import re
-import pandas as pd
-import requests
 from contextlib import contextmanager
-from datetime import datetime
 
 class KnowledgeBase:
     def __init__(self):
         self.db_path = os.getenv('DATABASE_PATH', 'bot_data.db')
-        self.csv_url = 'https://gist.githubusercontent.com/nambili-samuel/a3bf79d67b2bd0c8d5aa9a830024417d/raw/36f6f55b9997c60ff825ddc806cee8dfd76916d7/namibia_knowledge_base.csv'
-        self.last_sync = 0
-        self.sync_interval = 10 * 60 * 1000  # 10 minutes in milliseconds
-        
         self.init_knowledge_base()
-        
-        # Try to sync with CSV first, fallback to seeded data
-        try:
-            print("🔄 Attempting initial CSV sync...")
-            self.sync_with_csv()
-        except Exception as e:
-            print(f"❌ Initial CSV sync failed: {e}")
-            print("🔄 Seeding with fallback data...")
-            self.seed_fallback_data()
+        self.seed_namibia_data()
     
     @contextmanager
     def get_connection(self):
@@ -67,72 +52,17 @@ class KnowledgeBase:
                 ON knowledge(category)
             ''')
     
-    def sync_with_csv(self):
-        """Sync knowledge base with CSV from Gist"""
-        current_time = int(datetime.now().timestamp() * 1000)
-        
-        # Check if we need to sync based on interval
-        if current_time - self.last_sync < self.sync_interval:
-            print(f"⏸️ Skipping sync, last sync was {(current_time - self.last_sync) / 1000:.0f} seconds ago")
-            return
-        
-        print("🔄 Syncing with CSV...")
-        
-        # Download CSV from Gist
-        response = requests.get(self.csv_url)
-        response.raise_for_status()
-        
-        # Read CSV data
-        csv_data = response.text
-        
-        # Parse CSV
-        df = pd.read_csv(pd.compat.StringIO(csv_data))
-        
+    def seed_namibia_data(self):
+        """Seed Namibia knowledge base including real estate"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Clear existing data (optional - you might want to keep existing data)
-            cursor.execute('DELETE FROM knowledge')
-            cursor.execute('DELETE FROM knowledge_fts')
-            
-            # Insert new data
-            for _, row in df.iterrows():
-                category = str(row.get('category', 'General')).strip()
-                topic = str(row.get('topic', '')).strip()
-                content = str(row.get('content', '')).strip()
-                keywords = str(row.get('keywords', '')).strip()
-                
-                if not topic or not content:
-                    continue
-                
-                cursor.execute('''
-                    INSERT INTO knowledge (category, topic, content, keywords)
-                    VALUES (?, ?, ?, ?)
-                ''', (category, topic, content, keywords))
-                
-                knowledge_id = cursor.lastrowid
-                
-                cursor.execute('''
-                    INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (knowledge_id, category, topic, content, keywords))
-            
-            print(f"✅ Synced {len(df)} records from CSV")
-        
-        self.last_sync = current_time
-    
-    def seed_fallback_data(self):
-        """Seed fallback data if CSV sync fails"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Check if data already exists
+            # Check if data exists
             cursor.execute('SELECT COUNT(*) as count FROM knowledge')
             if cursor.fetchone()['count'] > 0:
-                print("✅ Data already exists, skipping fallback seeding")
                 return
             
-            # Namibia knowledge data (same as before)
+            # Namibia knowledge data
             namibia_data = [
                 # REAL ESTATE PROPERTIES
                 ('Real Estate', '4 Bedroom House for Sale - Windhoek West', 
@@ -198,8 +128,6 @@ class KnowledgeBase:
                     INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
                     VALUES (?, ?, ?, ?, ?)
                 ''', (knowledge_id, category, topic, content, keywords))
-            
-            print(f"✅ Seeded {len(namibia_data)} fallback records")
     
     def search(self, query, limit=5):
         """Search the knowledge base"""
