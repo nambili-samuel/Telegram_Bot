@@ -1,13 +1,21 @@
 import os
 import sqlite3
 import re
+import time
+import requests
+import csv
+from io import StringIO
 from contextlib import contextmanager
 
 class KnowledgeBase:
     def __init__(self):
         self.db_path = os.getenv('DATABASE_PATH', 'bot_data.db')
+        self.csv_url = 'https://gist.githubusercontent.com/nambili-samuel/a3bf79d67b2bd0c8d5aa9a830024417d/raw/36f6f55b9997c60ff825ddc806cee8dfd76916d7/namibia_knowledge_base.csv'
+        self.last_sync = 0
+        self.sync_interval = 10 * 60 * 1000  # 10 minutes in milliseconds
         self.init_knowledge_base()
         self.seed_namibia_data()
+        self.sync_from_gist()
     
     @contextmanager
     def get_connection(self):
@@ -35,6 +43,7 @@ class KnowledgeBase:
                     topic TEXT NOT NULL,
                     content TEXT NOT NULL,
                     keywords TEXT,
+                    source TEXT DEFAULT 'local',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -50,6 +59,18 @@ class KnowledgeBase:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_knowledge_category 
                 ON knowledge(category)
+            ''')
+            
+            # Create sync tracking table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sync_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sync_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    records_added INTEGER DEFAULT 0,
+                    records_updated INTEGER DEFAULT 0,
+                    status TEXT,
+                    message TEXT
+                )
             ''')
     
     def seed_namibia_data(self):
@@ -70,7 +91,7 @@ class KnowledgeBase:
                  'windhoek, west, house, 4 bedroom, sale, property, loide hashonia, contact'),
                 
                 ('Real Estate', 'Land Plot for Sale - Omuthiya (11470 sqm)', 
-                 '🏗️ Prime 11470 sqm land plot for sale in Omuthiya town. Ideal location for service station and commercial businesses. Excellent investment opportunity. Contact Loide Hashonia at +264 81 263 7307.', 
+                 '🗒️ Prime 11470 sqm land plot for sale in Omuthiya town. Ideal location for service station and commercial businesses. Excellent investment opportunity. Contact Loide Hashonia at +264 81 263 7307.', 
                  'omuthiya, land, plot, 11470, service station, business, commercial, sale, loide hashonia'),
                 
                 ('Real Estate', '3 Bedroom House for Sale - Okahandja', 
@@ -118,8 +139,8 @@ class KnowledgeBase:
             
             for category, topic, content, keywords in namibia_data:
                 cursor.execute('''
-                    INSERT INTO knowledge (category, topic, content, keywords)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO knowledge (category, topic, content, keywords, source)
+                    VALUES (?, ?, ?, ?, 'local')
                 ''', (category, topic, content, keywords))
                 
                 knowledge_id = cursor.lastrowid
@@ -129,8 +150,133 @@ class KnowledgeBase:
                     VALUES (?, ?, ?, ?, ?)
                 ''', (knowledge_id, category, topic, content, keywords))
     
+    def sync_from_gist(self, force=False):
+        """Sync knowledge base from GitHub Gist CSV"""
+        current_time = int(time.time() * 1000)
+        
+        # Check if sync is needed
+        if not force and (current_time - self.last_sync) < self.sync_interval:
+            return {'status': 'skipped', 'message': 'Sync interval not reached'}
+        
+        try:
+            # Fetch CSV from Gist
+            response = requests.get(self.csv_url, timeout=10)
+            response.raise_for_status()
+            
+            # Parse CSV
+            csv_data = StringIO(response.text)
+            reader = csv.DictReader(csv_data)
+            
+            records_added = 0
+            records_updated = 0
+            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                for row in reader:
+                    category = row.get('category', 'General').strip()
+                    topic = row.get('topic', '').strip()
+                    content = row.get('content', '').strip()
+                    keywords = row.get('keywords', '').strip()
+                    
+                    if not topic or not content:
+                        continue
+                    
+                    # Check if entry exists
+                    cursor.execute('''
+                        SELECT id FROM knowledge 
+                        WHERE topic = ? AND source = 'gist'
+                    ''', (topic,))
+                    
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        # Update existing entry
+                        cursor.execute('''
+                            UPDATE knowledge 
+                            SET category = ?, content = ?, keywords = ?, 
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        ''', (category, content, keywords, existing['id']))
+                        
+                        # Update FTS
+                        cursor.execute('''
+                            UPDATE knowledge_fts 
+                            SET category = ?, topic = ?, content = ?, keywords = ?
+                            WHERE rowid = ?
+                        ''', (category, topic, content, keywords, existing['id']))
+                        
+                        records_updated += 1
+                    else:
+                        # Insert new entry
+                        cursor.execute('''
+                            INSERT INTO knowledge (category, topic, content, keywords, source)
+                            VALUES (?, ?, ?, ?, 'gist')
+                        ''', (category, topic, content, keywords))
+                        
+                        knowledge_id = cursor.lastrowid
+                        
+                        cursor.execute('''
+                            INSERT INTO knowledge_fts (rowid, category, topic, content, keywords)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (knowledge_id, category, topic, content, keywords))
+                        
+                        records_added += 1
+                
+                # Log sync
+                cursor.execute('''
+                    INSERT INTO sync_log (records_added, records_updated, status, message)
+                    VALUES (?, ?, 'success', 'Sync completed successfully')
+                ''', (records_added, records_updated))
+            
+            self.last_sync = current_time
+            
+            return {
+                'status': 'success',
+                'records_added': records_added,
+                'records_updated': records_updated,
+                'message': f'Synced {records_added} new and {records_updated} updated records'
+            }
+            
+        except requests.RequestException as e:
+            error_msg = f'Failed to fetch CSV: {str(e)}'
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO sync_log (status, message)
+                    VALUES ('error', ?)
+                ''', (error_msg,))
+            
+            return {'status': 'error', 'message': error_msg}
+        
+        except Exception as e:
+            error_msg = f'Sync error: {str(e)}'
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO sync_log (status, message)
+                    VALUES ('error', ?)
+                ''', (error_msg,))
+            
+            return {'status': 'error', 'message': error_msg}
+    
+    def get_sync_status(self):
+        """Get last sync status"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM sync_log 
+                ORDER BY sync_timestamp DESC 
+                LIMIT 1
+            ''')
+            result = cursor.fetchone()
+            return dict(result) if result else None
+    
     def search(self, query, limit=5):
         """Search the knowledge base"""
+        # Auto-sync if needed
+        self.sync_from_gist()
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
@@ -176,8 +322,8 @@ class KnowledgeBase:
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT INTO knowledge (category, topic, content, keywords)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO knowledge (category, topic, content, keywords, source)
+                VALUES (?, ?, ?, ?, 'user')
             ''', (category, topic, content, keywords))
             
             knowledge_id = cursor.lastrowid
