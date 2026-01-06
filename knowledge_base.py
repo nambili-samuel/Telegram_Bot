@@ -133,7 +133,7 @@ class KnowledgeBase:
                 ('Wildlife', 'Cheetahs', 'As per Cheetah Conservation Fund statistics, Namibia has the largest population of cheetahs in the world, with excellent conservation programs.', 'cheetah, wildlife, conservation'),
                 
                 # History
-                ('History', 'Independence Day', 'Namibia gained independence from South Africa on March 21, 1990, ending decades of German colonial rule followed by South African administration and apartheid, with Sam Nujoma becoming its first President after SWAPO's victory in UN-supervised elections.', 'independence, history, 1990'),
+                ('History', 'Independence Day', 'Namibia gained independence from South Africa on March 21, 1990, ending decades of German colonial rule followed by South African administration and apartheid, with Sam Nujoma becoming its first President after SWAPO's victory in UN-supervised elections.','colonial, namibia, history, independence'),
                 ('History', 'German Colonization', 'German colonization of Namibia began in 1883, when the German trader Adolf Lüderitz annexed the territory. This ultimately led to the Herero and Namaqua Genocide, carried out under General Lothar von Trotha. After World War I, the territory came under the control of South Africa, where it was administered under an apartheid system.', 'german, colonial, history'),
                 
                 # Facts
