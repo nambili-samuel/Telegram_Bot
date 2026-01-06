@@ -727,6 +727,94 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await asyncio.sleep(1)
                 await update.message.reply_text(welcome, parse_mode="Markdown")
 
+async def post_daily_property(context: ContextTypes.DEFAULT_TYPE):
+    """Post daily property to all active groups"""
+    try:
+        logger.info("🏠 Starting daily property post...")
+        active_chats = eva.db.get_active_chats()
+        
+        if not active_chats:
+            logger.info("📭 No active chats for property posting")
+            return
+        
+        # Get all real estate properties
+        properties = eva.kb.get_by_category("Real Estate")
+        
+        if not properties:
+            logger.warning("⚠️ No real estate properties found")
+            return
+        
+        # Choose a random property or cycle through them
+        for chat in active_chats:
+            chat_id = chat['chat_id']
+            
+            # Rotate property selection based on day
+            day_of_year = datetime.now().timetuple().tm_yday
+            property_index = day_of_year % len(properties)
+            property_data = properties[property_index]
+            
+            # Format property message
+            message = f"🏠 *Featured Property of the Day*\n\n"
+            message += f"**{property_data['topic']}**\n\n"
+            message += f"{property_data['content']}\n\n"
+            message += "💡 _Interested? Contact us for more details!_\n"
+            message += "📱 Use /properties to see all listings!"
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode="Markdown"
+                )
+                logger.info(f"✅ Property posted to chat {chat_id}")
+                await asyncio.sleep(2)  # Avoid rate limiting
+            except Exception as e:
+                logger.error(f"❌ Failed to post to chat {chat_id}: {e}")
+                # Deactivate chat if bot was removed
+                if "bot was blocked" in str(e).lower() or "chat not found" in str(e).lower():
+                    eva.db.deactivate_chat(chat_id)
+                    logger.info(f"🔇 Deactivated chat {chat_id}")
+        
+        logger.info("✅ Daily property posting complete")
+    except Exception as e:
+        logger.error(f"❌ Error in daily property post: {e}")
+
+async def send_periodic_greetings(context: ContextTypes.DEFAULT_TYPE):
+    """Send periodic greetings to active groups"""
+    try:
+        logger.info("👋 Starting periodic greetings...")
+        active_chats = eva.db.get_active_chats()
+        
+        if not active_chats:
+            logger.info("📭 No active chats for greetings")
+            return
+        
+        for chat in active_chats:
+            chat_id = chat['chat_id']
+            
+            # Check if this chat should receive greeting
+            if eva.should_send_greeting(chat_id):
+                greeting = eva.get_periodic_greeting()
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=greeting,
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"✅ Greeting sent to chat {chat_id}")
+                    await asyncio.sleep(2)  # Avoid rate limiting
+                except Exception as e:
+                    logger.error(f"❌ Failed to send greeting to chat {chat_id}: {e}")
+                    # Deactivate chat if bot was removed
+                    if "bot was blocked" in str(e).lower() or "chat not found" in str(e).lower():
+                        eva.db.deactivate_chat(chat_id)
+                        logger.info(f"🔇 Deactivated chat {chat_id}")
+        
+        logger.info("✅ Periodic greetings complete")
+    except Exception as e:
+        logger.error(f"❌ Error in periodic greetings: {e}")
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle buttons"""
     query = update.callback_query
