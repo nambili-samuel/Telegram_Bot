@@ -123,7 +123,7 @@ class KnowledgeBase:
                 ('Culture', 'Languages in Namibia', 'English is official, but Afrikaans, German, Oshiwambo, and other indigenous languages are spoken.', 'language, english, afrikaans, oshiwambo'),
                 
                 # Practical
-                ('Practical', 'Visa Requirements', 'Most tourists get 90-day visa on arrival. Check with Namibian embassy for specific requirements.', 'visa, entry, requirements, travel'),
+                ('Practical', 'Visa Requirements', 'Namibia requires most visitors to have a visa include a valid passport (6+ months validity, 3 blank pages), with options for visa on arrival (VoA) at major ports for a fee (N$1,600 for non-Africans). Check with Namibian embassy for specific requirements.', 'visa, entry, requirements, travel'),
                 ('Practical', 'Currency', 'Namibia uses the Namibian Dollar (NAD), which is pegged to the South African Rand.', 'money, currency, dollar, nad'),
                 ('Practical', 'Weather', 'Namibia has a dry climate with 300+ sunny days per year. Days are warm, nights can be cool.', 'weather, climate, temperature'),
                 
