@@ -124,23 +124,23 @@ class KnowledgeBase:
                 
                 # Practical
                 ('Practical', 'Visa Requirements', 'Namibia requires most visitors to have a visa include a valid passport (6+ months validity, 3 blank pages), with options for visa on arrival (VoA) at major ports for a fee (N$1,600 for non-Africans). Check with Namibian embassy for specific requirements.', 'visa, entry, requirements, travel'),
-                ('Practical', 'Currency', 'Namibia uses the Namibian Dollar (NAD), which is pegged to the South African Rand.', 'money, currency, dollar, nad'),
-                ('Practical', 'Weather', 'Namibia has a dry climate with 300+ sunny days per year. Days are warm, nights can be cool.', 'weather, climate, temperature'),
+                ('Practical', 'Currency', 'Namibian Dollar (N$) is a national currency which is pegged to the South African Rand which is also a legal tender in Namibia. The Namibian dollar has denominations of 200, 100, 50, 20 and 10 dollar notes, 5 and 1 dollar coins and 50, 10 and 5 cent coins.', 'money, currency, dollar, nad'),
+                ('Practical', 'Weather', 'Namibia has a dry climate with 300+ sunny days per year. Days are warm, nights can be cool. Temperatures may rise above 40°C in summer, sometimes even up to 50°C in the desert areas, the Namib and the Kalahari. In winter temperatures still reach a pleasant 20° C to 25° C. At night temperatures may drop below 0° C though.', 'weather, climate, temperature'),
                 
                 # Wildlife
-                ('Wildlife', 'Desert Adapted Elephants', 'These elephants have longer legs and larger feet to walk on sand, and can survive without water for days.', 'elephant, desert, adapted, wildlife'),
-                ('Wildlife', 'Namib Desert Lions', 'Desert-adapted lions survive in harsh conditions and are larger than their savanna counterparts.', 'lion, desert, predator, wildlife'),
-                ('Wildlife', 'Cheetahs', 'Namibia has the largest population of cheetahs in the world, with excellent conservation programs.', 'cheetah, wildlife, conservation'),
+                ('Wildlife', 'Fauna', 'Namibia boasts unique wildlife, including the iconic Gemsbok (Oryx), elephants, buffalos, rhinos, lions and cheetahs, plus large populations of springbok, zebras, and giraffes.', 'elephant, desert, adapted, wildlife'),
+                ('Wildlife', 'Flora', 'Namibia has unique flora such as a resilient Welwitschia mirabilis, Quiver Tree (Kokerboom) and other unique species include diverse aloes (like the endemic Aloe erinacea), succulents (Lithops), thorny acacias, Moringa trees, and Mopane trees.', 'lion, desert, predator, wildlife'),
+                ('Wildlife', 'Cheetahs', 'As per Cheetah Conservation Fund statistics, Namibia has the largest population of cheetahs in the world, with excellent conservation programs.', 'cheetah, wildlife, conservation'),
                 
                 # History
-                ('History', 'Independence Day', 'Namibia gained independence from South Africa on March 21, 1990.', 'independence, history, 1990'),
-                ('History', 'German Colonization', 'Namibia was German South-West Africa from 1884-1915, leaving architectural influences.', 'german, colonial, history'),
+                ('History', 'Independence Day', 'Namibia gained independence from South Africa on March 21, 1990, ending decades of German colonial rule followed by South African administration and apartheid, with Sam Nujoma becoming its first President after SWAPO's victory in UN-supervised elections.', 'independence, history, 1990'),
+                ('History', 'German Colonization', 'German colonization of Namibia began in 1883, when the German trader Adolf Lüderitz annexed the territory. This ultimately led to the Herero and Namaqua Genocide, carried out under General Lothar von Trotha. After World War I, the territory came under the control of South Africa, where it was administered under an apartheid system.', 'german, colonial, history'),
                 
                 # Facts
-                ('Facts', 'Oldest Desert', 'The Namib Desert is 55-80 million years old, making it the world\'s oldest desert.', 'desert, oldest, namib, record'),
-                ('Facts', 'Population Density', 'Namibia has about 3 people per square kilometer, making it one of the least densely populated countries.', 'population, density, people'),
-                ('Facts', 'Dark Sky Reserve', 'Namibia has International Dark Sky Reserves, perfect for stargazing.', 'stars, stargazing, dark sky, astronomy'),
-                ('Facts', 'Conservation', 'Namibia is a world leader in conservation with 42% of its land under protection.', 'conservation, environment, protected'),
+                ('Facts', 'Namib Desert', 'The Namib Desert, one of the world’s oldest and driest deserts, stretches more than 2,000 km from north to south along Namibia’s Atlantic coast. It is only the place on Earth where the sea meets the desert directly.', 'desert, oldest, namib, record'),
+                ('Facts', 'Population', 'Namibia's population is around 3.1 million people, making it one of the world's most sparsely populated countries, with a density of about 4 people per square kilometer.', 'population, density, people'),
+                ('Facts', 'Natural Resources', 'Namibia's natural resources are crucial to its economy, primarily driven by significant mineral wealth like diamonds, uranium, zinc, copper, and gold, alongside growing oil and gas finds, and vast potential in renewable energy (solar, wind, green hydrogen).', 'stars, stargazing, dark sky, astronomy'),
+                ('Facts', 'Economy', 'Namibia's economy is a lower-middle-income country driven by mining (diamonds, uranium), agriculture, and tourism, but it struggles with high inequality (second-highest Gini coefficient globally) and unemployment despite significant progress.', 'conservation, environment, protected'),
             ]
             
             for category, topic, content, keywords in namibia_data:
