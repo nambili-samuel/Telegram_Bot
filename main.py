@@ -271,12 +271,12 @@ class InteractiveMenu:
         """Create main menu"""
         keyboard = [
             [InlineKeyboardButton("🏠 Real Estate", callback_data="cat_Real Estate")],
-            [InlineKeyboardButton("🏞️ Tourism & Travel", callback_data="cat_Tourism")],
-            [InlineKeyboardButton("📜 History & Heritage", callback_data="cat_History")],
-            [InlineKeyboardButton("👥 Culture & People", callback_data="cat_Culture")],
-            [InlineKeyboardButton("ℹ️ Practical Info", callback_data="cat_Practical")],
-            [InlineKeyboardButton("🦁 Wildlife & Nature", callback_data="cat_Wildlife")],
-            [InlineKeyboardButton("🚀 Quick Facts", callback_data="cat_Facts")],
+            [InlineKeyboardButton("🏞️ Tourism", callback_data="cat_Tourism")],
+            [InlineKeyboardButton("📜 History", callback_data="cat_History")],
+            [InlineKeyboardButton("👥 People", callback_data="cat_Culture")],
+            [InlineKeyboardButton("ℹ️ Info", callback_data="cat_Practical")],
+            [InlineKeyboardButton("🦁 Wildlife", callback_data="cat_Wildlife")],
+            [InlineKeyboardButton("🔍 Quick Facts", callback_data="cat_Facts")],
             [InlineKeyboardButton("🗺️ Geography", callback_data="cat_Geography")],
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -327,7 +327,7 @@ class InteractiveMenu:
         emoji_map = {
             "Real Estate": "🏠",
             "Tourism": "🏞️", "History": "📜", "Culture": "👥",
-            "Practical": "ℹ️", "Wildlife": "🦁", "Facts": "🚀",
+            "Practical": "ℹ️", "Wildlife": "🦁", "Facts": "🔍",
             "Geography": "🗺️"
         }
         
