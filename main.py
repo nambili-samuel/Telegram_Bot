@@ -502,7 +502,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /menu"""
     await update.message.reply_text(
-        "🇳🇦 *Namibia Knowledge System*\n\nWhat would you like to explore?",
+        "🇳🇦 *I am here to help learn Namibia*\n\nWhat would you like to explore?",
         parse_mode="Markdown",
         reply_markup=menu.main_menu()
     )
@@ -825,7 +825,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Main menu
     if data == "menu_back":
         await query.edit_message_text(
-            "🇳🇦 *Namibia Knowledge System*\n\nWhat would you like to explore?",
+            "🇳🇦 *I am here to help learn Namibia*\n\nWhat would you like to explore?",
             parse_mode="Markdown",
             reply_markup=menu.main_menu()
         )
