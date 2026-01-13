@@ -114,7 +114,7 @@ class KnowledgeBase:
                 ('Tourism', 'Etosha National Park', 'Etosha is Namibia\'s premier wildlife destination with lions, elephants, rhinos, and over 100 mammal species.', 'etosha, safari, wildlife, park'),
                 ('Tourism', 'Sossusvlei', 'Sossusvlei features the world\'s highest sand dunes (up to 380m) in the Namib Desert.', 'sossusvlei, dunes, desert, sand'),
                 ('Tourism', 'Swakopmund', 'Swakopmund is a coastal town with German colonial architecture and adventure activities.', 'swakopmund, coast, beach, german'),
-                ('Tourism', 'Fish River Canyon', 'Fish River Canyon is the second largest canyon in the world, perfect for hiking adventures.', 'canyon, hiking, fish river'),
+                ('Tourism', 'Fish River Canyon', 'The Fish River Canyon is located in the south of Namibia. It is the the second largest canyon in the world with 160 kilometres long, up to 27 km wide and 550 meters deep.', 'canyon, hiking, fish river'),
                 ('Tourism', 'Namib Desert', 'The Namib Desert is the world\'s oldest desert with stunning landscapes and unique wildlife.', 'desert, namib, oldest'),
                 
                 # Culture
